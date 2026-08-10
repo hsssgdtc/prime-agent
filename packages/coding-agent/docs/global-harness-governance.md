@@ -25,9 +25,11 @@ The authority signs the UTF-8 JSON returned by `buildGlobalHarnessApprovalPayloa
 
 ```json
 {
-  "schema": 1,
+  "schema": 2,
   "proposalId": "refine_...",
   "candidateSha256": "...",
+  "basePublishedSha256": null,
+  "publicationSequence": 1,
   "decision": "approved",
   "approvedBy": "sky",
   "approvedAt": "2026-08-10T00:00:00.000Z",
@@ -35,7 +37,9 @@ The authority signs the UTF-8 JSON returned by `buildGlobalHarnessApprovalPayloa
 }
 ```
 
-`publishGlobalHarnessProposal()` verifies the candidate hash and signature before replacing the published state and approval receipt. The private key must not be placed in the Prime process environment, agent directory, kernel, shell environment, or repository.
+`publishGlobalHarnessProposal()` verifies the candidate hash and signature before replacing the published state and approval receipt. Every approval is also bound to the published state it was based on and to the next publication sequence. A concurrently staged proposal therefore becomes stale after another proposal is published and cannot overwrite that edit. Signed approval receipts are retained under `harness/governance/published/`; restoring an older approved state while its signed successor remains in that ledger fails closed.
+
+The private key must not be placed in the Prime process environment, agent directory, kernel, shell environment, or repository.
 
 ## Load lifecycle
 
@@ -44,6 +48,7 @@ The TypeScript system-prompt loader verifies all of the following on every globa
 1. the approval receipt has the expected schema and decision;
 2. the state bytes match `candidateSha256`;
 3. the Ed25519 signature matches the externally configured public key.
+4. no signed direct successor in the publication ledger supersedes the selected state.
 
 The Python RLM helper independently applies the same hash and Ed25519 checks before returning global entries. A missing key, missing receipt, malformed receipt, invalid signature, corrupt JSON, or direct `harness_state.json` rewrite fails closed.
 
@@ -51,7 +56,7 @@ Rejected TypeScript loads return an empty global projection, emit `PRIME_GLOBAL_
 
 ## Boundary
 
-This patch prevents Prime's official refinement paths and arbitrary kernel state-file writes from silently becoming cross-session prompt context. It does not turn the entire Prime process into an OS security boundary. The approval private key must remain external; if it is exposed to the runtime user or model tools, the governance guarantee collapses and the signer must be rotated before accepting further publications.
+This patch prevents Prime's official refinement paths and ordinary direct state-file rewrites from silently becoming cross-session prompt context. The signed publication chain also rejects stale concurrent proposals and detects restoration of an older approved state while the successor ledger is intact. It does not turn the entire Prime process into an OS security boundary: a principal able to rewrite both the published pair and the publication ledger can still erase local evidence. The approval private key must remain external; if it is exposed to the runtime user or model tools, the governance guarantee collapses and the signer must be rotated before accepting further publications.
 
 ## Fork patch ledger
 

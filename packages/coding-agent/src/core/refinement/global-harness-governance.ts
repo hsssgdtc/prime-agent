@@ -1,5 +1,14 @@
 import { createHash, createPublicKey, randomUUID, verify } from "node:crypto";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+	appendFileSync,
+	existsSync,
+	mkdirSync,
+	readdirSync,
+	readFileSync,
+	renameSync,
+	unlinkSync,
+	writeFileSync,
+} from "node:fs";
 import { join, resolve } from "node:path";
 import { getAgentDir } from "../../config.js";
 
@@ -12,9 +21,11 @@ const GLOBAL_HARNESS_GOVERNANCE_DIR_NAME = "governance";
 const GLOBAL_HARNESS_APPROVAL_PUBLIC_KEY_ENV = "PRIME_GLOBAL_HARNESS_APPROVAL_PUBLIC_KEY";
 
 export interface GlobalHarnessApprovalReceiptUnsigned {
-	schema: 1;
+	schema: 2;
 	proposalId: string;
 	candidateSha256: string;
+	basePublishedSha256: string | null;
+	publicationSequence: number;
 	decision: "approved";
 	approvedBy: string;
 	approvedAt: string;
@@ -26,9 +37,11 @@ export interface GlobalHarnessApprovalReceipt extends GlobalHarnessApprovalRecei
 }
 
 interface GlobalHarnessPendingReceipt {
-	schema: 1;
+	schema: 2;
 	proposalId: string;
 	candidateSha256: string;
+	basePublishedSha256: string | null;
+	publicationSequence: number;
 	status: "pending_approval";
 	source: "host_refine" | "python_rlm";
 	createdAt: string;
@@ -109,9 +122,12 @@ function approvalPublicKey(): ReturnType<typeof createPublicKey> {
 
 function parseApprovalReceipt(value: Record<string, unknown>): GlobalHarnessApprovalReceipt | undefined {
 	if (
-		value.schema !== 1 ||
+		value.schema !== 2 ||
 		typeof value.proposalId !== "string" ||
 		typeof value.candidateSha256 !== "string" ||
+		!(typeof value.basePublishedSha256 === "string" || value.basePublishedSha256 === null) ||
+		!Number.isSafeInteger(value.publicationSequence) ||
+		(value.publicationSequence as number) < 1 ||
 		value.decision !== "approved" ||
 		typeof value.approvedBy !== "string" ||
 		typeof value.approvedAt !== "string" ||
@@ -123,10 +139,7 @@ function parseApprovalReceipt(value: Record<string, unknown>): GlobalHarnessAppr
 	return value as unknown as GlobalHarnessApprovalReceipt;
 }
 
-function verifyApprovalReceipt(receipt: GlobalHarnessApprovalReceipt, candidate: Buffer): void {
-	if (sha256(candidate) !== receipt.candidateSha256) {
-		throw new Error("approval receipt candidate hash does not match global harness state");
-	}
+function verifyApprovalReceiptSignature(receipt: GlobalHarnessApprovalReceipt): void {
 	let signature: Buffer;
 	try {
 		signature = Buffer.from(receipt.signature, "base64");
@@ -135,6 +148,30 @@ function verifyApprovalReceipt(receipt: GlobalHarnessApprovalReceipt, candidate:
 	}
 	if (!verify(null, buildGlobalHarnessApprovalPayload(receipt), approvalPublicKey(), signature)) {
 		throw new Error("approval signature is invalid");
+	}
+}
+
+function verifyApprovalReceipt(receipt: GlobalHarnessApprovalReceipt, candidate: Buffer): void {
+	if (sha256(candidate) !== receipt.candidateSha256) {
+		throw new Error("approval receipt candidate hash does not match global harness state");
+	}
+	verifyApprovalReceiptSignature(receipt);
+}
+
+function currentApprovedPublication(
+	harnessStateDir: string,
+): { state: Buffer; receipt: GlobalHarnessApprovalReceipt } | undefined {
+	const statePath = join(harnessStateDir, GLOBAL_HARNESS_STATE_FILE_NAME);
+	const receiptPath = join(harnessStateDir, GLOBAL_HARNESS_APPROVAL_RECEIPT_FILE_NAME);
+	if (!existsSync(statePath) || !existsSync(receiptPath)) return undefined;
+	const state = readFileSync(statePath);
+	const receipt = parseApprovalReceipt(readJsonObject(receiptPath) ?? {});
+	if (!receipt) return undefined;
+	try {
+		verifyApprovalReceipt(receipt, state);
+		return { state, receipt };
+	} catch {
+		return undefined;
 	}
 }
 
@@ -170,6 +207,8 @@ export function buildGlobalHarnessApprovalPayload(receipt: GlobalHarnessApproval
 			schema: receipt.schema,
 			proposalId: receipt.proposalId,
 			candidateSha256: receipt.candidateSha256,
+			basePublishedSha256: receipt.basePublishedSha256,
+			publicationSequence: receipt.publicationSequence,
 			decision: receipt.decision,
 			approvedBy: receipt.approvedBy,
 			approvedAt: receipt.approvedAt,
@@ -196,10 +235,13 @@ export function stageGlobalHarnessStateProposal(
 	const createdAt = new Date().toISOString();
 	const candidate = Buffer.from(jsonText(state), "utf8");
 	const candidateSha256 = sha256(candidate);
+	const published = currentApprovedPublication(harnessStateDir);
 	const pending: GlobalHarnessPendingReceipt = {
-		schema: 1,
+		schema: 2,
 		proposalId,
 		candidateSha256,
+		basePublishedSha256: published?.receipt.candidateSha256 ?? null,
+		publicationSequence: (published?.receipt.publicationSequence ?? 0) + 1,
 		status: "pending_approval",
 		source,
 		createdAt,
@@ -235,6 +277,27 @@ export function publishGlobalHarnessProposal(harnessStateDir: string, receipt: G
 	}
 	const candidate = readFileSync(candidatePath);
 	verifyApprovalReceipt(receipt, candidate);
+	const pending = readJsonObject(proposalReceiptPath(harnessStateDir, receipt.proposalId));
+	if (
+		pending?.candidateSha256 !== receipt.candidateSha256 ||
+		pending.basePublishedSha256 !== receipt.basePublishedSha256 ||
+		pending.publicationSequence !== receipt.publicationSequence
+	) {
+		throw new Error(`Global harness proposal ${receipt.proposalId} approval does not match its pending receipt`);
+	}
+	const publishedStatePath = join(harnessStateDir, GLOBAL_HARNESS_STATE_FILE_NAME);
+	const publishedReceiptPath = join(harnessStateDir, GLOBAL_HARNESS_APPROVAL_RECEIPT_FILE_NAME);
+	const published = currentApprovedPublication(harnessStateDir);
+	if ((existsSync(publishedStatePath) || existsSync(publishedReceiptPath)) && !published) {
+		throw new Error("Current global harness publication is invalid; refusing to overwrite it");
+	}
+	const expectedBase = published?.receipt.candidateSha256 ?? null;
+	const expectedSequence = (published?.receipt.publicationSequence ?? 0) + 1;
+	if (receipt.basePublishedSha256 !== expectedBase || receipt.publicationSequence !== expectedSequence) {
+		throw new Error(
+			`Global harness proposal ${receipt.proposalId} is stale: expected base ${expectedBase ?? "none"} at sequence ${expectedSequence}`,
+		);
+	}
 	const statePath = join(harnessStateDir, GLOBAL_HARNESS_STATE_FILE_NAME);
 	atomicWrite(statePath, candidate);
 	atomicWrite(join(harnessStateDir, GLOBAL_HARNESS_APPROVAL_RECEIPT_FILE_NAME), jsonText(receipt));
@@ -283,6 +346,22 @@ export function loadApprovedGlobalHarnessState(harnessStateDir: string): unknown
 	} catch (error) {
 		recordRejection(harnessStateDir, state, error instanceof Error ? error.message : String(error));
 		return undefined;
+	}
+	const publishedDir = join(harnessStateDir, GLOBAL_HARNESS_GOVERNANCE_DIR_NAME, "published");
+	if (existsSync(publishedDir)) {
+		for (const entry of readdirSync(publishedDir)) {
+			const newer = parseApprovalReceipt(readJsonObject(join(publishedDir, entry)) ?? {});
+			if (!newer || newer.publicationSequence <= receipt.publicationSequence) continue;
+			try {
+				verifyApprovalReceiptSignature(newer);
+			} catch {
+				continue;
+			}
+			if (newer.basePublishedSha256 === receipt.candidateSha256) {
+				recordRejection(harnessStateDir, state, `published state was superseded by ${newer.proposalId}`);
+				return undefined;
+			}
+		}
 	}
 	try {
 		return JSON.parse(state.toString("utf8"));

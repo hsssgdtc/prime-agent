@@ -11,7 +11,9 @@
   "published": {
     "stateFile": "harness_state.json",
     "receiptFile": "approval-receipt.json",
-    "signatureAlgorithm": "ed25519"
+    "signatureAlgorithm": "ed25519",
+    "receiptSchema": 2,
+    "chainFields": ["basePublishedSha256", "publicationSequence"]
   },
   "rejection": {
     "directory": "governance/rejections",
@@ -22,6 +24,8 @@
     "Python global_=True creates a pending proposal and does not change published state",
     "only a candidate with a valid external approval signature becomes loadable",
     "a direct harness_state.json write with no matching signed receipt loads as empty and leaves one rejection receipt",
+    "a stale proposal cannot overwrite a candidate published after it was staged",
+    "a previously approved state cannot be replayed while a signed successor receipt remains in the publication ledger",
     "local harness writes remain unchanged"
   ]
 }

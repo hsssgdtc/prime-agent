@@ -26,8 +26,9 @@ await refine.run("promote the error-handling pattern to a global skill", global_
 - `await refine.run(instructions=None, global_=False)` — schedule refinement.
   Returns `{"scheduled": True}` immediately, or `{"scheduled": False, "reason": ...}`
   when refinement cannot start. Optional `instructions` focus the refinement on a
-  specific observation. Set `global_=True` to target the global harness store
-  (cross-session); omit for local (session-scoped) refinement.
+  specific observation. Set `global_=True` to stage a proposal for the global
+  harness (cross-session); it remains invisible until an external authority signs
+  and publishes it. Omit for local (session-scoped) refinement.
 
 ## Rules
 
@@ -36,6 +37,8 @@ await refine.run("promote the error-handling pattern to a global skill", global_
   resumes you automatically. Continue working normally after calling it.
 - One request per turn is enough; calling `run` again before the turn ends only
   updates the instructions.
+- A global refinement result is a proposal, not a completed global write. Do not
+  claim that another session can use it until publication has been confirmed.
 - Use refinement after observing a repeated failure, a reusable tactic, a
   repeated delegation role, or a behavior policy worth persisting. Do not
   rewrite the whole harness when a focused memory, skill, prompt note, or

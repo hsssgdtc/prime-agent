@@ -119,53 +119,96 @@ def _atomic_write(path: Path, data: bytes) -> None:
             pass
 
 
-def _approved_global_data(file_path: Path) -> dict[str, Any]:
+def _valid_approval_receipt(receipt: Any) -> bool:
+    return isinstance(receipt, dict) and not (
+        receipt.get("schema") != 2
+        or receipt.get("decision") != "approved"
+        or receipt.get("signatureAlgorithm") != "ed25519"
+        or not isinstance(receipt.get("signature"), str)
+        or not isinstance(receipt.get("proposalId"), str)
+        or not isinstance(receipt.get("candidateSha256"), str)
+        or not isinstance(receipt.get("approvedBy"), str)
+        or not isinstance(receipt.get("approvedAt"), str)
+        or not (
+            isinstance(receipt.get("basePublishedSha256"), str)
+            or receipt.get("basePublishedSha256") is None
+        )
+        or not isinstance(receipt.get("publicationSequence"), int)
+        or receipt["publicationSequence"] < 1
+    )
+
+
+def _approval_payload(receipt: dict[str, Any]) -> bytes:
+    unsigned = {
+        "schema": receipt["schema"],
+        "proposalId": receipt["proposalId"],
+        "candidateSha256": receipt["candidateSha256"],
+        "basePublishedSha256": receipt["basePublishedSha256"],
+        "publicationSequence": receipt["publicationSequence"],
+        "decision": receipt["decision"],
+        "approvedBy": receipt["approvedBy"],
+        "approvedAt": receipt["approvedAt"],
+        "signatureAlgorithm": receipt["signatureAlgorithm"],
+    }
+    return json.dumps(unsigned, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+
+
+def _approval_public_key() -> Ed25519PublicKey | None:
+    public_key_encoded = (os.environ.get(_APPROVAL_PUBLIC_KEY_ENV) or "").strip()
+    if not public_key_encoded:
+        return None
+    try:
+        public_key = load_der_public_key(base64.b64decode(public_key_encoded, validate=True))
+    except (TypeError, ValueError):
+        return None
+    return public_key if isinstance(public_key, Ed25519PublicKey) else None
+
+
+def _valid_approval_signature(receipt: dict[str, Any], public_key: Ed25519PublicKey) -> bool:
+    try:
+        signature = base64.b64decode(receipt["signature"], validate=True)
+    except (TypeError, ValueError):
+        return False
+    try:
+        public_key.verify(signature, _approval_payload(receipt))
+    except InvalidSignature:
+        return False
+    return True
+
+
+def _approved_global_snapshot(file_path: Path) -> tuple[dict[str, Any], dict[str, Any] | None]:
     try:
         state_bytes = file_path.read_bytes()
         receipt = json.loads((file_path.parent / _APPROVAL_RECEIPT_FILE_NAME).read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return {}
-    if not isinstance(receipt, dict):
-        return {}
+        return {}, None
+    public_key = _approval_public_key()
     if (
-        receipt.get("schema") != 1
-        or receipt.get("decision") != "approved"
-        or receipt.get("signatureAlgorithm") != "ed25519"
-        or not isinstance(receipt.get("signature"), str)
-        or receipt.get("candidateSha256") != _sha256(state_bytes)
+        not _valid_approval_receipt(receipt)
+        or receipt["candidateSha256"] != _sha256(state_bytes)
+        or public_key is None
+        or not _valid_approval_signature(receipt, public_key)
     ):
-        return {}
-    public_key_encoded = (os.environ.get(_APPROVAL_PUBLIC_KEY_ENV) or "").strip()
-    if not public_key_encoded:
-        return {}
-    unsigned = {
-        "schema": receipt["schema"],
-        "proposalId": receipt.get("proposalId"),
-        "candidateSha256": receipt["candidateSha256"],
-        "decision": receipt["decision"],
-        "approvedBy": receipt.get("approvedBy"),
-        "approvedAt": receipt.get("approvedAt"),
-        "signatureAlgorithm": receipt["signatureAlgorithm"],
-    }
-    if not all(isinstance(unsigned[field], str) for field in ("proposalId", "approvedBy", "approvedAt")):
-        return {}
-    payload = json.dumps(unsigned, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
-    try:
-        public_key = load_der_public_key(base64.b64decode(public_key_encoded, validate=True))
-        signature = base64.b64decode(receipt["signature"], validate=True)
-    except (TypeError, ValueError):
-        return {}
-    if not isinstance(public_key, Ed25519PublicKey):
-        return {}
-    try:
-        public_key.verify(signature, payload)
-    except InvalidSignature:
-        return {}
+        return {}, None
+    published_dir = file_path.parent / "governance" / "published"
+    if published_dir.exists():
+        for path in published_dir.glob("*.json"):
+            try:
+                newer = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            if (
+                _valid_approval_receipt(newer)
+                and newer["publicationSequence"] > receipt["publicationSequence"]
+                and newer["basePublishedSha256"] == receipt["candidateSha256"]
+                and _valid_approval_signature(newer, public_key)
+            ):
+                return {}, None
     try:
         data = json.loads(state_bytes)
     except ValueError:
-        return {}
-    return data if isinstance(data, dict) else {}
+        return {}, None
+    return (data, receipt) if isinstance(data, dict) else ({}, None)
 
 
 @dataclass
@@ -243,6 +286,7 @@ class HarnessState:
         self._local_write_error = local_write_error
         self.entries: dict[HarnessKind, dict[str, HarnessEntry]] = {kind: {} for kind in _KINDS}
         self.refinements: list[RefinementEvent] = []
+        self._loaded_global_receipt: dict[str, Any] | None = None
         self._global_target_state_dir: Path | None = None
         # mtime of the file as of the last load/save, used to detect out-of-process
         # writes (e.g. the host `/refine` command) and avoid clobbering them.
@@ -277,6 +321,7 @@ class HarnessState:
         if self.file_path is None or not self.file_path.exists():
             self.entries = {kind: {} for kind in _KINDS}
             self.refinements = []
+            self._loaded_global_receipt = None
             self._loaded_mtime = None
             return self
         mtime = self._disk_mtime()
@@ -284,8 +329,9 @@ class HarnessState:
             # The TypeScript host performs the Ed25519 verification before injecting
             # global state. Kernel reads additionally require the matching published
             # receipt and hash, so a direct state-only write is not surfaced here.
-            data = _approved_global_data(self.file_path)
+            data, self._loaded_global_receipt = _approved_global_snapshot(self.file_path)
         else:
+            self._loaded_global_receipt = None
             try:
                 with self.file_path.open("r", encoding="utf-8") as f:
                     data = json.load(f)
@@ -402,9 +448,17 @@ class HarnessState:
         candidate = (json.dumps(data, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
         candidate_sha256 = _sha256(candidate)
         pending = {
-            "schema": 1,
+            "schema": 2,
             "proposalId": proposal_id,
             "candidateSha256": candidate_sha256,
+            "basePublishedSha256": (
+                self._loaded_global_receipt.get("candidateSha256") if self._loaded_global_receipt else None
+            ),
+            "publicationSequence": (
+                int(self._loaded_global_receipt.get("publicationSequence", 0)) + 1
+                if self._loaded_global_receipt
+                else 1
+            ),
             "status": "pending_approval",
             "source": "python_rlm",
             "createdAt": created_at,

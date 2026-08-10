@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { generateKeyPairSync, sign } from "node:crypto";
+import { generateKeyPairSync, type KeyObject, sign } from "node:crypto";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -44,7 +44,11 @@ afterEach(() => {
 	rmSync(tempRoot, { recursive: true, force: true });
 });
 
-function stageHostProposal(): { harnessDir: string; proposalId: string; candidatePath: string } {
+function stageHostProposal(
+	proposalId = "refine_u1_fixture",
+	entryId = "durable_preference",
+	content = "Use evidence before synthesis.",
+): { harnessDir: string; proposalId: string; candidatePath: string } {
 	const harnessDir = getGlobalHarnessStateDir();
 	const state = loadHarnessState(harnessDir, "global");
 	const result = applyRefinementProposal(
@@ -57,13 +61,13 @@ function stageHostProposal(): { harnessDir: string; proposalId: string; candidat
 				{
 					action: "create",
 					kind: "memory",
-					id: "durable_preference",
+					id: entryId,
 					title: "Durable preference",
-					content: "Use evidence before synthesis.",
+					content,
 				},
 			],
 		},
-		{ id: "refine_u1_fixture", scope: "global" },
+		{ id: proposalId, scope: "global" },
 	);
 	result.harnessStatePath = saveHarnessState(harnessDir, state);
 	appendGlobalRefinement(harnessDir, result);
@@ -92,6 +96,31 @@ function pythonGlobalMemoryIds(harnessDir: string): string[] {
 	return JSON.parse(run.stdout) as string[];
 }
 
+function signedApproval(harnessDir: string, proposalId: string, privateKey: KeyObject): GlobalHarnessApprovalReceipt {
+	const pending = JSON.parse(
+		readFileSync(join(harnessDir, "proposals", proposalId, fixture.proposal.receiptFile), "utf8"),
+	) as {
+		candidateSha256: string;
+		basePublishedSha256: string | null;
+		publicationSequence: number;
+	};
+	const unsigned = {
+		schema: 2 as const,
+		proposalId,
+		candidateSha256: pending.candidateSha256,
+		basePublishedSha256: pending.basePublishedSha256,
+		publicationSequence: pending.publicationSequence,
+		decision: "approved" as const,
+		approvedBy: "sky",
+		approvedAt: "2026-08-10T00:00:00.000Z",
+		signatureAlgorithm: "ed25519" as const,
+	};
+	return {
+		...unsigned,
+		signature: sign(null, buildGlobalHarnessApprovalPayload(unsigned), privateKey).toString("base64"),
+	};
+}
+
 describe("global harness governance", () => {
 	it("stages host global refinement without changing published state", () => {
 		const { harnessDir, proposalId, candidatePath } = stageHostProposal();
@@ -114,22 +143,7 @@ describe("global harness governance", () => {
 		const { privateKey, publicKey } = generateKeyPairSync("ed25519");
 		process.env[fixture.approvalPublicKeyEnv] = publicKey.export({ format: "der", type: "spki" }).toString("base64");
 		const candidatePath = join(harnessDir, "proposals", proposalId, fixture.proposal.candidateFile);
-		const candidateSha256 = JSON.parse(
-			readFileSync(join(harnessDir, "proposals", proposalId, fixture.proposal.receiptFile), "utf8"),
-		).candidateSha256 as string;
-		const unsigned = {
-			schema: 1 as const,
-			proposalId,
-			candidateSha256,
-			decision: "approved" as const,
-			approvedBy: "sky",
-			approvedAt: "2026-08-10T00:00:00.000Z",
-			signatureAlgorithm: "ed25519" as const,
-		};
-		const receipt: GlobalHarnessApprovalReceipt = {
-			...unsigned,
-			signature: sign(null, buildGlobalHarnessApprovalPayload(unsigned), privateKey).toString("base64"),
-		};
+		const receipt = signedApproval(harnessDir, proposalId, privateKey);
 
 		expect(() =>
 			publishGlobalHarnessProposal(harnessDir, {
@@ -151,22 +165,7 @@ describe("global harness governance", () => {
 		const { harnessDir, proposalId } = stageHostProposal();
 		const { privateKey, publicKey } = generateKeyPairSync("ed25519");
 		process.env[fixture.approvalPublicKeyEnv] = publicKey.export({ format: "der", type: "spki" }).toString("base64");
-		const pending = JSON.parse(
-			readFileSync(join(harnessDir, "proposals", proposalId, fixture.proposal.receiptFile), "utf8"),
-		) as { candidateSha256: string };
-		const unsigned = {
-			schema: 1 as const,
-			proposalId,
-			candidateSha256: pending.candidateSha256,
-			decision: "approved" as const,
-			approvedBy: "sky",
-			approvedAt: "2026-08-10T00:00:00.000Z",
-			signatureAlgorithm: "ed25519" as const,
-		};
-		publishGlobalHarnessProposal(harnessDir, {
-			...unsigned,
-			signature: sign(null, buildGlobalHarnessApprovalPayload(unsigned), privateKey).toString("base64"),
-		});
+		publishGlobalHarnessProposal(harnessDir, signedApproval(harnessDir, proposalId, privateKey));
 
 		writeFileSync(
 			getHarnessStatePath(harnessDir),
@@ -181,6 +180,52 @@ describe("global harness governance", () => {
 		expect(pythonGlobalMemoryIds(harnessDir)).toEqual([]);
 		loadHarnessState(harnessDir, "global");
 		expect(readdirSync(rejectionDir)).toHaveLength(1);
+	});
+
+	it("rejects a stale proposal instead of overwriting a concurrently published edit", () => {
+		const first = stageHostProposal("refine_concurrent_a", "concurrent_a", "first approved edit");
+		const second = stageHostProposal("refine_concurrent_b", "concurrent_b", "stale candidate");
+		const { privateKey, publicKey } = generateKeyPairSync("ed25519");
+		process.env[fixture.approvalPublicKeyEnv] = publicKey.export({ format: "der", type: "spki" }).toString("base64");
+
+		publishGlobalHarnessProposal(first.harnessDir, signedApproval(first.harnessDir, first.proposalId, privateKey));
+		expect(() =>
+			publishGlobalHarnessProposal(
+				second.harnessDir,
+				signedApproval(second.harnessDir, second.proposalId, privateKey),
+			),
+		).toThrow("is stale");
+		expect(loadHarnessState(first.harnessDir, "global").entries.memory.concurrent_a?.content).toBe(
+			"first approved edit",
+		);
+		expect(loadHarnessState(first.harnessDir, "global").entries.memory.concurrent_b).toBeUndefined();
+	});
+
+	it("rejects replay of an approved state after a signed successor was published", () => {
+		const { privateKey, publicKey } = generateKeyPairSync("ed25519");
+		process.env[fixture.approvalPublicKeyEnv] = publicKey.export({ format: "der", type: "spki" }).toString("base64");
+		const first = stageHostProposal("refine_chain_a", "chain_a", "first generation");
+		publishGlobalHarnessProposal(first.harnessDir, signedApproval(first.harnessDir, first.proposalId, privateKey));
+		const firstState = readFileSync(getHarnessStatePath(first.harnessDir));
+		const firstReceipt = readFileSync(join(first.harnessDir, "approval-receipt.json"));
+
+		const second = stageHostProposal("refine_chain_b", "chain_b", "second generation");
+		publishGlobalHarnessProposal(second.harnessDir, signedApproval(second.harnessDir, second.proposalId, privateKey));
+		expect(loadHarnessState(second.harnessDir, "global").entries.memory.chain_b).toBeDefined();
+
+		writeFileSync(getHarnessStatePath(first.harnessDir), firstState);
+		writeFileSync(join(first.harnessDir, "approval-receipt.json"), firstReceipt);
+		const replayed = loadHarnessState(first.harnessDir, "global");
+		expect(replayed.entries.memory.chain_a).toBeUndefined();
+		expect(replayed.entries.memory.chain_b).toBeUndefined();
+		const rejectionReceipts = readdirSync(join(first.harnessDir, fixture.rejection.directory)).map((file) =>
+			JSON.parse(readFileSync(join(first.harnessDir, fixture.rejection.directory, file), "utf8")),
+		);
+		expect(rejectionReceipts).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({ reason: expect.stringContaining("superseded by refine_chain_b") }),
+			]),
+		);
 	});
 
 	it("turns Python global_=True into a pending proposal", () => {
