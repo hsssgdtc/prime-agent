@@ -263,7 +263,7 @@ export function acpUpdatesForSessionEvent(
 					sessionUpdate: "session_info_update",
 					_meta: primeAgentMeta({
 						refinement: {
-							status: "complete",
+							status: event.result.publicationStatus === "pending_approval" ? "pending_approval" : "complete",
 							summary: event.result.summary,
 							changes: event.result.appliedEdits
 								?.filter((edit) => edit.applied)

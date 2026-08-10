@@ -1,4 +1,4 @@
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -85,7 +85,7 @@ describe("ACP mode over a real IPython kernel", () => {
 	);
 
 	it(
-		"runs continual-harness CRUD in the kernel and can represent the result over ACP",
+		"stages global continual-harness proposals in the kernel and represents pending approval over ACP",
 		{ tags: ["kernel-heavy"], timeout: 180_000 },
 		async () => {
 			provisioner = new IpythonKernelProvisioner(tempDir, {
@@ -140,10 +140,19 @@ print(json.dumps({
 `);
 			expect(result.status, why(result)).toBe("ok");
 			const payload = JSON.parse(result.stdout.trim());
-			expect(payload.found).toBe("ACP verification memory");
-			expect(payload.listed).toContain(payload.created);
-			expect(payload.deleted).toBe(true);
+			expect(payload.found).toBeNull();
+			expect(payload.listed).toEqual([]);
+			expect(payload.deleted).toBe(false);
 			expect(payload.after).toBeNull();
+			const proposalRoot = join(tempDir, "harness", "proposals");
+			const proposalIds = readdirSync(proposalRoot);
+			expect(proposalIds).toHaveLength(5);
+			for (const proposalId of proposalIds) {
+				expect(JSON.parse(readFileSync(join(proposalRoot, proposalId, "receipt.json"), "utf8"))).toMatchObject({
+					status: "pending_approval",
+					source: "python_rlm",
+				});
+			}
 
 			// A refinement outcome for that CRUD is expressible as namespaced metadata.
 			const refined = acpUpdatesForSessionEvent({
@@ -151,10 +160,11 @@ print(json.dumps({
 				result: {
 					summary: "persisted ACP verification memory",
 					appliedEdits: [{ applied: true, action: "create", kind: "memory", id: payload.created }],
+					publicationStatus: "pending_approval",
 				},
 			} as AgentConnectionSessionEvent);
 			expect(refined[0]?._meta).toMatchObject({
-				[PRIME_AGENT_META_NAMESPACE]: { refinement: { status: "complete" } },
+				[PRIME_AGENT_META_NAMESPACE]: { refinement: { status: "pending_approval" } },
 			});
 		},
 	);
