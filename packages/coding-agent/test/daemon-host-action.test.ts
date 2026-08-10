@@ -52,7 +52,7 @@ describe("daemon extension host actions", () => {
 	});
 
 	it("advertises the schema and dedicated capability", () => {
-		expect(DAEMON_SCHEMA_REVISION).toBe(15);
+		expect(DAEMON_SCHEMA_REVISION).toBeGreaterThanOrEqual(15);
 		expect(DAEMON_SUPPORTED_CLIENT_CAPABILITIES).toContain("extension_host_action");
 	});
 

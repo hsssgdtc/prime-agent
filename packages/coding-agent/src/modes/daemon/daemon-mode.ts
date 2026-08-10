@@ -272,6 +272,7 @@ const DAEMON_COMMAND_TYPES: ReadonlySet<string> = new Set([
 	"get_session_header",
 	"get_state",
 	"get_connection_state",
+	"goal_create",
 	"get_messages",
 	"get_session_stats",
 	"get_context_tree",
@@ -4121,6 +4122,18 @@ export class AgentDaemon {
 			case "get_connection_state": {
 				const state = this.getSessionState(command.activeSessionId);
 				return success(command.id, "get_connection_state", this.createConnectionState(state));
+			}
+
+			case "goal_create": {
+				const state = this.getSessionState(command.activeSessionId);
+				return success(
+					command.id,
+					"goal_create",
+					state.runtime.session.handleGoalHostRequest("goal.create", {
+						objective: command.objective,
+						...(command.tokenBudget === undefined ? {} : { token_budget: command.tokenBudget }),
+					}),
+				);
 			}
 
 			case "get_messages": {

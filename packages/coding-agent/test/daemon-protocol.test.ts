@@ -88,6 +88,16 @@ describe("daemon protocol helpers", () => {
 		expect(DAEMON_DEFAULT_SERVER_CAPABILITIES).toContain("model_catalog");
 	});
 
+	it("capability-gates goal creation at the introducing schema revision", () => {
+		expect(DAEMON_COMMAND_COMPATIBILITY.goal_create).toEqual({
+			minProtocol: 7,
+			minSchemaRevision: 16,
+			capability: "goal_management",
+		});
+		expect(DAEMON_DEFAULT_SERVER_CAPABILITIES).toContain("goal_management");
+		expect(isDaemonMutatingCommand({ type: "goal_create" })).toBe(true);
+	});
+
 	it("schema-gates the RLM max depth commands at their introducing revision", () => {
 		expect(DAEMON_COMMAND_COMPATIBILITY.get_rlm_max_depth_status).toEqual({ minProtocol: 7, minSchemaRevision: 11 });
 		expect(DAEMON_COMMAND_COMPATIBILITY.set_rlm_max_depth).toEqual({ minProtocol: 7, minSchemaRevision: 11 });
