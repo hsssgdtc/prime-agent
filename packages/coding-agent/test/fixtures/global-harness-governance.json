@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "baselineCommit": "a18809e00ea30638584d87b3afea7285a9d7296c",
+  "approvalPublicKeyEnv": "PRIME_GLOBAL_HARNESS_APPROVAL_PUBLIC_KEY",
+  "proposal": {
+    "status": "pending_approval",
+    "candidateFile": "candidate_harness_state.json",
+    "proposalFile": "proposal.json",
+    "receiptFile": "receipt.json"
+  },
+  "published": {
+    "stateFile": "harness_state.json",
+    "receiptFile": "approval-receipt.json",
+    "signatureAlgorithm": "ed25519"
+  },
+  "rejection": {
+    "directory": "governance/rejections",
+    "event": "global_harness_load_rejected"
+  },
+  "expected": [
+    "host global refinement creates a pending proposal and does not change published state",
+    "Python global_=True creates a pending proposal and does not change published state",
+    "only a candidate with a valid external approval signature becomes loadable",
+    "a direct harness_state.json write with no matching signed receipt loads as empty and leaves one rejection receipt",
+    "local harness writes remain unchanged"
+  ]
+}
