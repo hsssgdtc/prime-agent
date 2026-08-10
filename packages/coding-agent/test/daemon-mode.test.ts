@@ -46,6 +46,41 @@ import type { SessionSummary } from "../src/modes/daemon/daemon-session-list.js"
 import { DAEMON_WORKER_SUPERVISOR_SOCKET_ENV } from "../src/modes/daemon/daemon-worker-protocol.js";
 
 describe("daemon mode helpers", () => {
+	it("creates a successor goal through the capability-scoped daemon command", async () => {
+		const daemon = new AgentDaemon("/tmp/unused-daemon.sock", {
+			defaultSessionConfig: { agentDir: "/tmp", cwd: "/tmp" },
+			createRuntime: vi.fn(),
+		});
+		const state = makeState("active");
+		const handleGoalHostRequest = vi.fn(() => ({
+			goal_id: "goal-successor",
+			objective: "finish U4",
+			status: "active",
+		}));
+		state.runtime = {
+			...state.runtime,
+			session: { handleGoalHostRequest },
+		} as unknown as ActiveSessionState["runtime"];
+		const internals = daemon as unknown as {
+			sessions: Map<string, ActiveSessionState>;
+			handleCommand(client: DaemonSocketClient, command: DaemonCommand): Promise<unknown>;
+		};
+		internals.sessions.set(state.activeSessionId, state);
+
+		const response = await internals.handleCommand(makeClient("client-1", state.activeSessionId), {
+			type: "goal_create",
+			activeSessionId: state.activeSessionId,
+			objective: "finish U4",
+			tokenBudget: 900,
+		});
+
+		expect(handleGoalHostRequest).toHaveBeenCalledWith("goal.create", {
+			objective: "finish U4",
+			token_budget: 900,
+		});
+		expect(response).toMatchObject({ success: true, data: { objective: "finish U4", status: "active" } });
+	});
+
 	it("preserves envelope client identity while registering prompt admission", () => {
 		const daemon = new AgentDaemon("/tmp/unused-daemon.sock", {
 			defaultSessionConfig: { agentDir: "/tmp", cwd: "/tmp" },

@@ -58,8 +58,9 @@ export const DAEMON_COMMAND_ENVELOPE_MIN_PROTOCOL_VERSION = 7;
 // Revision 13 narrows agent-origin reach and roster wire shapes to the nuclear family.
 // Revision 14 carries the client's monotonic telemetry opt-out on attach and reattach.
 // Revision 15 adds capability-scoped extension host actions and structured responses.
-export const DAEMON_SCHEMA_REVISION = 15;
-export const DAEMON_SCHEMA_ID = "protocol-7-schema-15-5f2d403ddafb";
+// Revision 16 adds capability-scoped goal creation for bounded-session handoff.
+export const DAEMON_SCHEMA_REVISION = 16;
+export const DAEMON_SCHEMA_ID = "protocol-7-schema-16-468ed7590159";
 
 export type DaemonProtocolName = typeof DAEMON_PROTOCOL_NAME;
 export type DaemonProtocolVersion = number;
@@ -88,6 +89,7 @@ export type DaemonServerCapability =
 	| "delete_rlm_subagent"
 	| "heartbeat_catalog"
 	| "heartbeat_management"
+	| "goal_management"
 	| "model_catalog"
 	// The daemon honors previousTurns on start_side_question (multi-turn side
 	// conversations). Clients must check before sending follow-up transcripts.
@@ -132,6 +134,7 @@ export const DAEMON_DEFAULT_SERVER_CAPABILITIES: readonly DaemonServerCapability
 	"delete_rlm_subagent",
 	"heartbeat_catalog",
 	"heartbeat_management",
+	"goal_management",
 	"model_catalog",
 	"side_question_transcript",
 	"transient_bash",
@@ -503,6 +506,7 @@ export type DaemonCommand =
 	| { id?: string; type: "get_session_header"; activeSessionId: string }
 	| { id?: string; type: "get_state"; activeSessionId: string }
 	| { id?: string; type: "get_connection_state"; activeSessionId: string }
+	| { id?: string; type: "goal_create"; activeSessionId: string; objective: string; tokenBudget?: number }
 	| { id?: string; type: "get_messages"; activeSessionId: string }
 	| { id?: string; type: "get_session_stats"; activeSessionId: string }
 	| { id?: string; type: "get_context_tree"; activeSessionId: string }
@@ -638,6 +642,7 @@ const DELETE_RLM_SUBAGENT_COMMAND = {
 } as const;
 const FLAT_SESSION_TREE_COMMAND = { minProtocol: 7 } as const;
 const TELEMETRY_POLICY_COMMAND = { minProtocol: 7, minSchemaRevision: 14 } as const;
+const GOAL_MANAGEMENT_COMMAND = { minProtocol: 7, minSchemaRevision: 16, capability: "goal_management" } as const;
 
 export const DAEMON_COMMAND_COMPATIBILITY = {
 	ack_result: LEGACY_DAEMON_COMMAND,
@@ -677,6 +682,7 @@ export const DAEMON_COMMAND_COMPATIBILITY = {
 	get_session_header: CURRENT_DAEMON_COMMAND,
 	get_state: LEGACY_DAEMON_COMMAND,
 	get_connection_state: LEGACY_DAEMON_COMMAND,
+	goal_create: GOAL_MANAGEMENT_COMMAND,
 	get_messages: LEGACY_DAEMON_COMMAND,
 	get_session_stats: LEGACY_DAEMON_COMMAND,
 	get_context_tree: LEGACY_DAEMON_COMMAND,
