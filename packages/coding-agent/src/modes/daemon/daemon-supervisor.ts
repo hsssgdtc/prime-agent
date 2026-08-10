@@ -182,6 +182,7 @@ const DAEMON_COMMAND_TYPES: ReadonlySet<string> = new Set([
 	"get_session_header",
 	"get_state",
 	"get_connection_state",
+	"goal_create",
 	"get_messages",
 	"get_session_stats",
 	"get_context_tree",
