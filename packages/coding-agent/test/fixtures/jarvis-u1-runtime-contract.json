@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "baselineCommit": "819c422c5a6a7b44f8f39b7d8846740d86e942b2",
+  "nativeCapabilities": [
+    "persistent-ipython",
+    "native-child-sessions",
+    "detach-reattach",
+    "goal",
+    "user-heartbeat",
+    "agent-heartbeat",
+    "one-shot-schedule",
+    "cron-schedule",
+    "agent-messaging",
+    "daemon-supervisor-worker-restart"
+  ],
+  "sessionOwnership": {
+    "resume": {
+      "goal": "loaded from the resumed session branch",
+      "schedulesAndHeartbeats": "rebound to the new daemon active id while retaining the stable session file"
+    },
+    "new": {
+      "goal": "starts empty",
+      "schedulesAndHeartbeats": "move with the live active session to the replacement session file"
+    },
+    "fork": {
+      "goal": "copied only when its state entry is on the selected branch",
+      "schedulesAndHeartbeats": "move with the live active session to the fork session file"
+    },
+    "independentSuccessor": {
+      "goal": "starts empty unless explicitly handed off",
+      "schedulesAndHeartbeats": "remain bound to the predecessor until explicitly cancelled and re-registered"
+    }
+  },
+  "artifact": {
+    "workflow": "jarvis-prime-artifact.yml",
+    "mustContain": ["prime-agent", "prime-agent-ai", "prime-agent-core", "prime-agent-tui", "SHA256SUMS"],
+    "smoke": ["checksum verification", "bundle --version", "bundle --help"]
+  },
+  "expected": [
+    "the ownership table is demonstrated with persisted goal state and all three schedule kinds",
+    "native capability evidence comes from executable Prime tests rather than source inventory alone",
+    "the fixed artifact is built in CI because repository rules forbid local npm run build",
+    "kernel snapshots are treated as revivable cache while durable cross-episode results require explicit artifacts",
+    "ordinary RLM children retain the parent tool authority and are not represented as a sandbox"
+  ]
+}

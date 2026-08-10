@@ -1,0 +1,66 @@
+name: Jarvis Prime Artifact
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_ref:
+        description: Commit, tag, or branch to package
+        required: true
+        default: main
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout requested ref
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ inputs.build_ref }}
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build distribution
+        run: npm run build
+
+      - name: Verify source
+        run: npm run check
+
+      - name: Pack immutable Jarvis artifact
+        shell: bash
+        run: |
+          BUILD_SHA=$(git rev-parse HEAD)
+          VERSION="0.7.1-jarvis.${BUILD_SHA:0:12}"
+          echo "BUILD_SHA=$BUILD_SHA" >> "$GITHUB_ENV"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          npm run release:pack -- \
+            --channel beta \
+            --version "$VERSION" \
+            --base-url https://jarvis-prime.invalid \
+            --out-dir packages/coding-agent/release/jarvis
+
+      - name: Record source manifest
+        shell: bash
+        run: |
+          node -e 'const fs=require("node:fs"); fs.writeFileSync("packages/coding-agent/release/jarvis/artifacts/jarvis-source.json", JSON.stringify({schema:1,sourceCommit:process.env.BUILD_SHA,version:process.env.VERSION,node:process.version},null,2)+"\n")'
+          cd packages/coding-agent/release/jarvis/artifacts
+          sha256sum jarvis-source.json >> SHA256SUMS
+
+      - name: Upload fixed artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: jarvis-prime-${{ env.BUILD_SHA }}
+          path: packages/coding-agent/release/jarvis/artifacts/*
+          if-no-files-found: error
+          retention-days: 30
