@@ -53,7 +53,7 @@ export interface PrimeAgentGoalMeta {
 }
 
 export interface PrimeAgentRefinementMeta {
-	status: "complete" | "failed";
+	status: "complete" | "failed" | "pending_approval";
 	summary?: string;
 	changes?: string[];
 	error?: string;

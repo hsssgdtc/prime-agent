@@ -1,25 +1,36 @@
 """Persistent harness-state helpers for Prime Agent's RLM kernel.
 
 The state model is intentionally small: it records prompt notes, memory,
-skills, subagent specs, and refinement events in the global agent harness
-directory by default. Execution still belongs to Prime Agent's TypeScript host
-and the existing ``rlm.run`` recursion bridge.
+skills, subagent specs, and refinement events in the current session by
+default. Global mutations create reviewable proposals; only the TypeScript host
+loads externally approved, signed global state. Execution still belongs to
+Prime Agent's TypeScript host and the existing ``rlm.run`` recursion bridge.
 """
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 import os
+import uuid
 from dataclasses import asdict, dataclass, field, fields
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
+
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+from cryptography.hazmat.primitives.serialization import load_der_public_key
 
 HarnessKind = Literal["prompt", "memory", "skill", "subagent"]
 HarnessScope = Literal["local", "global"]
 
 _DEFAULT_FILE_NAME = "harness_state.json"
 _DEFAULT_HARNESS_DIR_NAME = "harness"
+_APPROVAL_RECEIPT_FILE_NAME = "approval-receipt.json"
+_APPROVAL_PUBLIC_KEY_ENV = "PRIME_GLOBAL_HARNESS_APPROVAL_PUBLIC_KEY"
+_PROPOSALS_DIR_NAME = "proposals"
 _KINDS: tuple[HarnessKind, ...] = ("prompt", "memory", "skill", "subagent")
 _state_cache: dict[tuple[Path, HarnessScope], "HarnessState"] = {}
 
@@ -88,6 +99,73 @@ def _state_file(state_dir: str | Path | None = None, *, global_: bool = False) -
     if root:
         return Path(root).expanduser().resolve() / _DEFAULT_FILE_NAME
     return _agent_dir() / _DEFAULT_HARNESS_DIR_NAME / _DEFAULT_FILE_NAME
+
+
+def _sha256(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def _atomic_write(path: Path, data: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f"{path.name}.{os.getpid()}.{uuid.uuid4()}.tmp")
+    try:
+        temporary.write_bytes(data)
+        os.chmod(temporary, 0o600)
+        temporary.replace(path)
+    finally:
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def _approved_global_data(file_path: Path) -> dict[str, Any]:
+    try:
+        state_bytes = file_path.read_bytes()
+        receipt = json.loads((file_path.parent / _APPROVAL_RECEIPT_FILE_NAME).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(receipt, dict):
+        return {}
+    if (
+        receipt.get("schema") != 1
+        or receipt.get("decision") != "approved"
+        or receipt.get("signatureAlgorithm") != "ed25519"
+        or not isinstance(receipt.get("signature"), str)
+        or receipt.get("candidateSha256") != _sha256(state_bytes)
+    ):
+        return {}
+    public_key_encoded = (os.environ.get(_APPROVAL_PUBLIC_KEY_ENV) or "").strip()
+    if not public_key_encoded:
+        return {}
+    unsigned = {
+        "schema": receipt["schema"],
+        "proposalId": receipt.get("proposalId"),
+        "candidateSha256": receipt["candidateSha256"],
+        "decision": receipt["decision"],
+        "approvedBy": receipt.get("approvedBy"),
+        "approvedAt": receipt.get("approvedAt"),
+        "signatureAlgorithm": receipt["signatureAlgorithm"],
+    }
+    if not all(isinstance(unsigned[field], str) for field in ("proposalId", "approvedBy", "approvedAt")):
+        return {}
+    payload = json.dumps(unsigned, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    try:
+        public_key = load_der_public_key(base64.b64decode(public_key_encoded, validate=True))
+        signature = base64.b64decode(receipt["signature"], validate=True)
+    except (TypeError, ValueError):
+        return {}
+    if not isinstance(public_key, Ed25519PublicKey):
+        return {}
+    try:
+        public_key.verify(signature, payload)
+    except InvalidSignature:
+        return {}
+    try:
+        data = json.loads(state_bytes)
+    except ValueError:
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
 @dataclass
@@ -197,16 +275,24 @@ class HarnessState:
 
     def load(self) -> "HarnessState":
         if self.file_path is None or not self.file_path.exists():
+            self.entries = {kind: {} for kind in _KINDS}
+            self.refinements = []
             self._loaded_mtime = None
             return self
         mtime = self._disk_mtime()
-        try:
-            with self.file_path.open("r", encoding="utf-8") as f:
-                data = json.load(f)
-        except (OSError, ValueError):
-            # A corrupt or unreadable state file must not crash the kernel or block
-            # refinement. Treat it as empty; the next save() rewrites it cleanly.
-            data = {}
+        if self.scope == "global":
+            # The TypeScript host performs the Ed25519 verification before injecting
+            # global state. Kernel reads additionally require the matching published
+            # receipt and hash, so a direct state-only write is not surfaced here.
+            data = _approved_global_data(self.file_path)
+        else:
+            try:
+                with self.file_path.open("r", encoding="utf-8") as f:
+                    data = json.load(f)
+            except (OSError, ValueError):
+                # A corrupt or unreadable local state file must not crash the kernel
+                # or block refinement. The next local save rewrites it cleanly.
+                data = {}
         # json.load returns non-dict types for valid JSON like `null`, `[]`, or a bare
         # string; coerce those to an empty object before attribute access.
         if not isinstance(data, dict):
@@ -285,7 +371,6 @@ class HarnessState:
         if self.file_path is None:
             # in_memory fallback: nothing to persist.
             return self
-        self.file_path.parent.mkdir(parents=True, exist_ok=True)
         data = {
             "schema": 1,
             "entries": {
@@ -294,10 +379,50 @@ class HarnessState:
             },
             "refinements": [asdict(event) for event in self.refinements],
         }
+        if self.scope == "global":
+            self._stage_global_proposal(data)
+            # A pending candidate must not become the cached global read view. Reload
+            # only the externally approved published state after staging.
+            self.entries = {kind: {} for kind in _KINDS}
+            self.refinements = []
+            self.load()
+            return self
+        self.file_path.parent.mkdir(parents=True, exist_ok=True)
         with self.file_path.open("w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
         self._loaded_mtime = self._disk_mtime()
         return self
+
+    def _stage_global_proposal(self, data: dict[str, Any]) -> Path:
+        if self.file_path is None:
+            raise RuntimeError("Global harness proposal requires a persistent state directory")
+        proposal_id = f"proposal_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S%f')}_{uuid.uuid4()}"
+        created_at = _now()
+        proposal_dir = self.file_path.parent / _PROPOSALS_DIR_NAME / proposal_id
+        candidate = (json.dumps(data, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
+        candidate_sha256 = _sha256(candidate)
+        pending = {
+            "schema": 1,
+            "proposalId": proposal_id,
+            "candidateSha256": candidate_sha256,
+            "status": "pending_approval",
+            "source": "python_rlm",
+            "createdAt": created_at,
+        }
+        proposal = {
+            **pending,
+            "candidateFile": "candidate_harness_state.json",
+        }
+        _atomic_write(proposal_dir / "candidate_harness_state.json", candidate)
+        _atomic_write(
+            proposal_dir / "proposal.json",
+            (json.dumps(proposal, indent=2, ensure_ascii=False) + "\n").encode("utf-8"),
+        )
+        _atomic_write(
+            proposal_dir / "receipt.json",
+            (json.dumps(pending, indent=2, ensure_ascii=False) + "\n").encode("utf-8"),
+        )
+        return proposal_dir
 
     def upsert(
         self,

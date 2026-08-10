@@ -17,6 +17,12 @@ import { getAgentDir } from "../../config.js";
 import { serializeConversation } from "../compaction/utils.js";
 import { convertToLlm } from "../messages.js";
 import type { CustomEntry } from "../session-manager.js";
+import {
+	attachGlobalHarnessRefinementResult,
+	isGovernedGlobalHarnessStateDir,
+	loadApprovedGlobalHarnessState,
+	stageGlobalHarnessStateProposal,
+} from "./global-harness-governance.js";
 
 export const REFINEMENT_CUSTOM_TYPE = "prime-agent.refinement";
 
@@ -99,6 +105,8 @@ export interface RefinementResult {
 	harnessStatePath: string;
 	rollbackOf?: string;
 	scope?: HarnessScope;
+	publicationStatus?: "pending_approval" | "published";
+	approvalReceiptPath?: string;
 }
 
 export interface RefineOptions {
@@ -288,7 +296,10 @@ export function loadHarnessState(
 	}
 	let parsed: Partial<HarnessState>;
 	try {
-		const raw = JSON.parse(readFileSync(statePath, "utf8"));
+		const raw =
+			scope === "global" && isGovernedGlobalHarnessStateDir(harnessStateDir)
+				? loadApprovedGlobalHarnessState(harnessStateDir)
+				: JSON.parse(readFileSync(statePath, "utf8"));
 		// loadHarnessState runs on every system-prompt build and before each /refine, so
 		// a corrupt or unreadable (or non-object) state file must degrade to empty rather
 		// than throw and break the session. The next saveHarnessState rewrites it cleanly.
@@ -343,6 +354,9 @@ export function mergeHarnessStates(globalState: HarnessState, localState?: Harne
 }
 
 export function saveHarnessState(harnessStateDir: string, state: HarnessState): string {
+	if (isGovernedGlobalHarnessStateDir(harnessStateDir)) {
+		return stageGlobalHarnessStateProposal(harnessStateDir, state);
+	}
 	const statePath = getHarnessStatePath(harnessStateDir);
 	const tempPath = `${statePath}.${process.pid}.${randomUUID()}.tmp`;
 	mkdirSync(harnessStateDir, { recursive: true });
@@ -372,6 +386,11 @@ function isRefinementResult(data: unknown): data is RefinementResult {
  * session JSONL and roll back via their recorded harnessStatePath.
  */
 export function appendGlobalRefinement(harnessStateDir: string, result: RefinementResult): string {
+	if (isGovernedGlobalHarnessStateDir(harnessStateDir)) {
+		result.publicationStatus = "pending_approval";
+		result.approvalReceiptPath = join(harnessStateDir, "proposals", result.id, "receipt.json");
+		return attachGlobalHarnessRefinementResult(harnessStateDir, result.id, result);
+	}
 	const historyPath = getRefinementHistoryPath(harnessStateDir);
 	mkdirSync(harnessStateDir, { recursive: true });
 	appendFileSync(historyPath, `${JSON.stringify(result)}\n`, "utf8");

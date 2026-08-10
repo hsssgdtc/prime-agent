@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Kernel-side runtime shim for Prime Agent recursion"
 requires-python = ">=3.10"
 dependencies = [
+  "cryptography>=46.0.3",
   "ipykernel",
   "nest-asyncio",
   "tyro",
