@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- Added a capability-scoped daemon host-action bridge so in-worker extensions can request structured, fail-closed actions from an attached gateway.
 - Added local per-request context composition, provider cache usage, latency, and child-usage telemetry to session traces.
 - Changed global continual-harness writes to require externally signed approval before cross-session state is loaded.
 - Added a configurable copy action to login dialogs so raw sign-in URLs can be copied without selecting wrapped text ([#643](https://github.com/PrimeIntellect-ai/prime-agent/issues/643)).

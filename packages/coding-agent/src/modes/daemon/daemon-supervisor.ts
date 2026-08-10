@@ -595,6 +595,8 @@ export class DaemonSupervisor {
 	private readonly openingWorkers = new Map<string, Promise<ResidentWorker>>();
 	/** Public admission ids are scoped to the socket that registered them. */
 	private readonly promptAdmissions = new Map<DaemonSocketClient, Map<string, SupervisorPromptAdmission>>();
+	/** Public request ownership prevents one capability class from answering another's request. */
+	private readonly extensionUiRequestMethods = new Map<string, string>();
 	private readonly signalCleanupHandlers: Array<() => void> = [];
 	private readonly descriptorDir: string;
 	private readonly generation = randomUUID();
@@ -1858,6 +1860,16 @@ export class DaemonSupervisor {
 		if (!("activeSessionId" in command) || typeof command.activeSessionId !== "string") {
 			throw new Error(`Supervisor cannot route daemon command: ${command.type}`);
 		}
+		if (command.type === "extension_ui_response") {
+			const method = this.extensionUiRequestMethods.get(`${command.activeSessionId}:${command.requestId}`);
+			if (!method) {
+				throw new Error(`Unknown extension UI request: ${command.requestId}`);
+			}
+			const requiredCapability = method === "hostAction" ? "extension_host_action" : "extension_ui";
+			if (!client.capabilities.has(requiredCapability)) {
+				throw new Error(`Client lacks ${requiredCapability} capability for extension response`);
+			}
+		}
 		const admission =
 			(command.type === "prompt" || command.type === "prompt_and_wait") && command.admissionId
 				? this.getPromptAdmission(client, command.activeSessionId, command.admissionId)
@@ -1899,7 +1911,11 @@ export class DaemonSupervisor {
 						return forward();
 					});
 				}
-				return await forward();
+				const response = await forward();
+				if (command.type === "extension_ui_response" && response.success) {
+					this.extensionUiRequestMethods.delete(`${command.activeSessionId}:${command.requestId}`);
+				}
+				return response;
 			}
 			this.persistWorkerStopTombstone(match.worker, true);
 			let response: DaemonResponse;
@@ -2360,12 +2376,21 @@ export class DaemonSupervisor {
 		const supportsExtensionUi = [...this.clients].some(
 			(client) => client.attachedActiveSessionIds.has(activeSessionId) && client.supportsExtensionUi,
 		);
+		const supportsHostAction = [...this.clients].some(
+			(client) =>
+				client.attachedActiveSessionIds.has(activeSessionId) && client.capabilities.has("extension_host_action"),
+		);
 		const response = await worker.client.requestWorker({
 			type: "worker_subscribe",
 			activeSessionId,
-			capabilities: supportsExtensionUi
-				? ["attach_snapshot", "event_sequence", "extension_ui", "slim_attach", "chunked_snapshot"]
-				: ["attach_snapshot", "event_sequence", "slim_attach", "chunked_snapshot"],
+			capabilities: [
+				"attach_snapshot",
+				"event_sequence",
+				"slim_attach",
+				"chunked_snapshot",
+				...(supportsExtensionUi ? (["extension_ui"] as const) : []),
+				...(supportsHostAction ? (["extension_host_action"] as const) : []),
+			],
 			supportsExtensionUi,
 		});
 		if (!response.success) {
@@ -4085,7 +4110,8 @@ export class DaemonSupervisor {
 			sessionEventType === "message_end" ||
 			outboundType === "session_replaced" ||
 			outboundType === "session_resynced" ||
-			outboundType === "session_closed"
+			outboundType === "session_closed" ||
+			outboundType === "extension_ui_request"
 		) {
 			try {
 				decodedOutbound = JSON.parse(frame.payload.toString("utf8")) as DaemonOutbound;
@@ -4096,6 +4122,18 @@ export class DaemonSupervisor {
 		}
 		const replacementSnapshotFollows =
 			decodedOutbound?.type === "session_replaced" && decodedOutbound.snapshotFollows === true;
+		if (decodedOutbound?.type === "extension_ui_request") {
+			const requestKey = `${decodedOutbound.activeSessionId}:${decodedOutbound.id}`;
+			this.extensionUiRequestMethods.set(requestKey, decodedOutbound.method);
+			if (decodedOutbound.method === "hostAction") {
+				const timeout = decodedOutbound.payload.timeout;
+				const cleanup = setTimeout(
+					() => this.extensionUiRequestMethods.delete(requestKey),
+					typeof timeout === "number" && Number.isFinite(timeout) ? Math.max(0, timeout) + 1_000 : 31_000,
+				);
+				cleanup.unref();
+			}
+		}
 		this.invalidateWorkerSnapshot(
 			worker,
 			activeSessionId,
@@ -4110,8 +4148,13 @@ export class DaemonSupervisor {
 			if (replacementSnapshotFollows && !client.capabilities.has("chunked_snapshot")) {
 				continue;
 			}
-			if (outboundType === "extension_ui_request" && !client.supportsExtensionUi) {
-				continue;
+			if (outboundType === "extension_ui_request") {
+				const method = decodedOutbound?.type === "extension_ui_request" ? decodedOutbound.method : undefined;
+				if (
+					method === "hostAction" ? !client.capabilities.has("extension_host_action") : !client.supportsExtensionUi
+				) {
+					continue;
+				}
 			}
 			if (client.snapshotActiveSessionIds?.has(activeSessionId)) {
 				this.queueCatchup(client, activeSessionId, outboundType === "session_replaced" ? "replacement" : "resync");

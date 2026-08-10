@@ -1,11 +1,13 @@
 import { randomUUID } from "node:crypto";
 import type {
 	ExtensionCommandContextActions,
+	ExtensionHostActionOptions,
 	ExtensionUIContext,
 	ExtensionUIDialogOptions,
 	ExtensionWidgetOptions,
 	WorkingIndicatorOptions,
 } from "../../core/extensions/index.js";
+import { ExtensionHostActionError } from "../../core/extensions/index.js";
 import type { SubagentRuntimeHost } from "../../core/rlm-runtime.js";
 import { createAgentConnectionState } from "../agent-connection/snapshot.js";
 import type { AgentConnectionState } from "../agent-connection/types.js";
@@ -122,7 +124,7 @@ function createCommandContextActions(state: ActiveSessionState): ExtensionComman
 	};
 }
 
-function createExtensionUIContext(
+export function createExtensionUIContext(
 	state: ActiveSessionState,
 	broadcast: ActiveSessionBindingCallbacks["broadcast"],
 ): ExtensionUIContext {
@@ -167,6 +169,7 @@ function createExtensionUIContext(
 			};
 			const onAbort = () => finish(fallback);
 			state.extensionUiRequests.set(requestId, {
+				method,
 				resolve: (response) => finish(resolveResponse(response)),
 			});
 			opts?.signal?.addEventListener("abort", onAbort, { once: true });
@@ -177,6 +180,70 @@ function createExtensionUIContext(
 	};
 
 	return {
+		requestHostAction: <T extends Record<string, unknown>>(
+			action: string,
+			payload: Record<string, unknown>,
+			opts?: ExtensionHostActionOptions,
+		): Promise<T> => {
+			if (!action.trim()) {
+				return Promise.reject(new ExtensionHostActionError("invalid_action", "Host action name must not be empty"));
+			}
+			if (!hasExtensionUiClientForMethod(state, "hostAction")) {
+				return Promise.reject(
+					new ExtensionHostActionError("host_unavailable", "No host action broker is attached"),
+				);
+			}
+			if (opts?.signal?.aborted) {
+				return Promise.reject(new ExtensionHostActionError("aborted", "Host action was aborted"));
+			}
+			const effectiveTimeout = opts?.timeout ?? 30_000;
+			const requestId = emitUiRequest("hostAction", { action, payload, timeout: effectiveTimeout });
+			return new Promise<T>((resolve, reject) => {
+				let timeoutId: ReturnType<typeof setTimeout> | undefined;
+				const cleanup = () => {
+					if (timeoutId) clearTimeout(timeoutId);
+					opts?.signal?.removeEventListener("abort", onAbort);
+					state.extensionUiRequests.delete(requestId);
+				};
+				const fail = (error: ExtensionHostActionError) => {
+					cleanup();
+					reject(error);
+				};
+				const onAbort = () => fail(new ExtensionHostActionError("aborted", "Host action was aborted"));
+				state.extensionUiRequests.set(requestId, {
+					method: "hostAction",
+					resolve: (response) => {
+						cleanup();
+						if ("result" in response) {
+							resolve(response.result as T);
+							return;
+						}
+						if ("error" in response) {
+							reject(
+								new ExtensionHostActionError(
+									response.error.code,
+									response.error.message,
+									response.error.retryable,
+									response.error.details,
+								),
+							);
+							return;
+						}
+						reject(
+							new ExtensionHostActionError(
+								"invalid_response",
+								"Host action broker returned an invalid response",
+							),
+						);
+					},
+				});
+				opts?.signal?.addEventListener("abort", onAbort, { once: true });
+				timeoutId = setTimeout(
+					() => fail(new ExtensionHostActionError("timeout", "Host action timed out", true)),
+					effectiveTimeout,
+				);
+			});
+		},
 		select: (title, values, opts) =>
 			dialogRequest("select", { title, options: values, timeout: opts?.timeout }, opts, undefined, (response) =>
 				"cancelled" in response && response.cancelled
@@ -247,6 +314,13 @@ function createExtensionUIContext(
 }
 
 function hasExtensionUiClientForMethod(state: ActiveSessionState, method: string): boolean {
+	if (method === "hostAction") {
+		return [...state.clients].some((client) =>
+			(client.capabilitiesByActiveSessionId?.get(state.activeSessionId) ?? client.capabilities).has(
+				"extension_host_action",
+			),
+		);
+	}
 	if (!isDaemonDialogExtensionUiRequest(method)) {
 		return state.clients.size > 0;
 	}

@@ -76,6 +76,9 @@ export function createRpcExtensionUiBridge(output: (request: RpcExtensionUIReque
 						? response.confirmed
 						: false,
 			),
+		requestHostAction: async () => {
+			throw new Error("RPC mode does not expose an extension host action broker");
+		},
 		input: (title, placeholder, opts) =>
 			createDialogPromise(
 				opts,

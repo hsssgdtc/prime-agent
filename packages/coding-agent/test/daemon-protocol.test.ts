@@ -33,12 +33,16 @@ describe("daemon protocol helpers", () => {
 			source.indexOf("export interface DaemonSavedSessionInfo"),
 			source.indexOf("export type DaemonDeleteSavedSessionResult"),
 		);
+		const extensionResponseSource = source.slice(
+			source.indexOf("export interface DaemonExtensionHostActionFailure"),
+			source.indexOf("export function isDaemonDialogExtensionUiRequest"),
+		);
 		const outboundSource = source.slice(
 			source.indexOf("export type DaemonOutbound ="),
 			source.indexOf("export const DAEMON_OUTBOUND_COMPATIBILITY"),
 		);
 		const digest = createHash("sha256")
-			.update(`${commandSource}\n${savedSessionSource}\n${outboundSource}`)
+			.update(`${commandSource}\n${savedSessionSource}\n${extensionResponseSource}\n${outboundSource}`)
 			.digest("hex")
 			.slice(0, 12);
 		expect(DAEMON_SCHEMA_ID).toBe(`protocol-${DAEMON_PROTOCOL_VERSION}-schema-${DAEMON_SCHEMA_REVISION}-${digest}`);
