@@ -286,6 +286,44 @@ async function startBlockingBash(client: DaemonClient, activeSessionId: string, 
 }
 
 describe("daemon supervisor resident workers", () => {
+	it("forwards goal creation through the public supervisor socket", async () => {
+		const root = tempDir();
+		const agentDir = join(root, "agent");
+		const projectDir = join(root, "project");
+		const sessionDir = join(agentDir, "sessions");
+		const socketPath = join(tmpdir(), `prime-supervisor-goal-${process.pid}-${randomUUID().slice(0, 8)}.sock`);
+		mkdirSync(projectDir, { recursive: true });
+		const supervisor = spawnSupervisor(agentDir, socketPath, projectDir);
+		const client = await connectEventually(socketPath, supervisor);
+		const created = await client.request({
+			type: "create",
+			config: { cwd: projectDir, agentDir, sessionDir, noExtensions: true },
+		});
+		if (!created.success) throw new Error(created.error);
+		const summary = requireSummary(created.data);
+		if (!summary.activeSessionId || !summary.workerPid)
+			throw new Error("Goal fixture did not create a resident worker");
+		workerPids.add(summary.workerPid);
+
+		const goal = await client.request({
+			type: "goal_create",
+			activeSessionId: summary.activeSessionId,
+			objective: "preserve bounded episode continuity",
+			tokenBudget: 900,
+		});
+		if (!goal.success) throw new Error(goal.error);
+		expect(goal).toMatchObject({
+			success: true,
+			data: { goal: { objective: "preserve bounded episode continuity" } },
+		});
+		const state = await client.request({ type: "get_connection_state", activeSessionId: summary.activeSessionId });
+		expect(state).toMatchObject({
+			success: true,
+			data: { goal: { objective: "preserve bounded episode continuity", status: "active", tokenBudget: 900 } },
+		});
+		client.close();
+	}, 60_000);
+
 	it("lists, creates, and attaches passive children through their owning worker", async () => {
 		const root = tempDir();
 		const agentDir = join(root, "agent");
