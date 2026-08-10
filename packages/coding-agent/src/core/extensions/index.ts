@@ -77,6 +77,7 @@ export type {
 	ExtensionFactory,
 	ExtensionFlag,
 	ExtensionHandler,
+	ExtensionHostActionOptions,
 	// Runtime
 	ExtensionRuntime,
 	ExtensionShortcut,
@@ -165,6 +166,7 @@ export type {
 // Type guards
 export {
 	defineTool,
+	ExtensionHostActionError,
 	isBashToolResult,
 	isEditToolResult,
 	isIpythonToolResult,

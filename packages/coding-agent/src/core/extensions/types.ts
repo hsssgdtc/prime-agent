@@ -106,6 +106,20 @@ export interface WorkingIndicatorOptions {
 	intervalMs?: number;
 }
 
+export interface ExtensionHostActionOptions extends ExtensionUIDialogOptions {}
+
+export class ExtensionHostActionError extends Error {
+	constructor(
+		readonly code: string,
+		message: string,
+		readonly retryable = false,
+		readonly details?: Record<string, unknown>,
+	) {
+		super(message);
+		this.name = "ExtensionHostActionError";
+	}
+}
+
 /** Wrap the current autocomplete provider with additional behavior. */
 export type AutocompleteProviderFactory = (current: AutocompleteProvider) => AutocompleteProvider;
 export type EditorFactory = (tui: TUI, theme: EditorTheme, keybindings: KeybindingsManager) => EditorComponent;
@@ -120,6 +134,13 @@ export interface ExtensionUIContext {
 
 	/** Show a confirmation dialog. */
 	confirm(title: string, message: string, opts?: ExtensionUIDialogOptions): Promise<boolean>;
+
+	/** Request a structured action from an attached host such as a mobile gateway. */
+	requestHostAction<T extends Record<string, unknown> = Record<string, unknown>>(
+		action: string,
+		payload: Record<string, unknown>,
+		opts?: ExtensionHostActionOptions,
+	): Promise<T>;
 
 	/** Show a text input dialog. */
 	input(title: string, placeholder?: string, opts?: ExtensionUIDialogOptions): Promise<string | undefined>;

@@ -4516,6 +4516,10 @@ export class AgentDaemon {
 				if (!pending) {
 					throw new Error(`Unknown extension UI request: ${command.requestId}`);
 				}
+				const requiredCapability = pending.method === "hostAction" ? "extension_host_action" : "extension_ui";
+				if (!daemonClientCapabilitiesForSession(client, state.activeSessionId).has(requiredCapability)) {
+					throw new Error(`Client lacks ${requiredCapability} capability for extension response`);
+				}
 				state.extensionUiRequests.delete(command.requestId);
 				pending.resolve(command.response);
 				return success(command.id, "extension_ui_response");
@@ -6680,11 +6684,18 @@ function daemonClientCapabilitiesForSession(
 	client: DaemonSocketClient,
 	activeSessionId: string,
 ): ReadonlySet<DaemonClientCapability> {
-	return client.capabilitiesByActiveSessionId?.get(activeSessionId) ?? client.capabilities;
+	if (client.capabilitiesByActiveSessionId) {
+		return client.capabilitiesByActiveSessionId.get(activeSessionId) ?? new Set();
+	}
+	return client.capabilities;
 }
 
 function daemonClientSupportsExtensionUi(client: DaemonSocketClient, activeSessionId: string): boolean {
-	return client.capabilitiesByActiveSessionId?.get(activeSessionId)?.has("extension_ui") ?? client.supportsExtensionUi;
+	return daemonClientCapabilitiesForSession(client, activeSessionId).has("extension_ui");
+}
+
+function daemonClientSupportsHostAction(client: DaemonSocketClient, activeSessionId: string): boolean {
+	return daemonClientCapabilitiesForSession(client, activeSessionId).has("extension_host_action");
 }
 
 export function markClientSnapshotStreaming(client: DaemonSocketClient, activeSessionId: string): AbortSignal {
@@ -6781,6 +6792,9 @@ function isSequencedSessionOutbound(message: DaemonOutbound): message is Sequenc
 }
 
 export function shouldSendDaemonOutboundToClient(client: DaemonSocketClient, message: DaemonOutbound): boolean {
+	if (message.type === "extension_ui_request" && message.method === "hostAction") {
+		return daemonClientSupportsHostAction(client, message.activeSessionId);
+	}
 	return (
 		message.type !== "extension_ui_request" ||
 		!isDaemonDialogExtensionUiRequest(message.method) ||

@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "baselineCommit": "1120b606179f80a02f8912cf80bdfb3fa427edbb",
+  "wire": {
+    "protocol": 7,
+    "minimumSchemaRevision": 15,
+    "clientCapability": "extension_host_action",
+    "requestMethod": "hostAction",
+    "responseCommand": "extension_ui_response"
+  },
+  "expected": [
+    "an extension can request a JSON-serializable host action from its tool execution context",
+    "only a client attached to the same active session with extension_host_action receives the request",
+    "a client without the capability cannot observe or answer the request",
+    "structured success results return to the extension unchanged",
+    "structured failure results reject the extension request with the broker error code and message",
+    "abort and timeout remove pending requests and fail closed",
+    "ordinary extension UI behavior remains compatible"
+  ],
+  "nonGoals": [
+    "the runtime does not decide which Feishu or Lark action is allowed",
+    "the runtime does not store account credentials or execute reality actions",
+    "the runtime does not add a Jarvis-specific action allowlist"
+  ]
+}

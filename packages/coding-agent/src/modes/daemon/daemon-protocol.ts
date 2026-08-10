@@ -57,8 +57,9 @@ export const DAEMON_COMMAND_ENVELOPE_MIN_PROTOCOL_VERSION = 7;
 // Revision 12 publishes idle-residency metadata on session summary rows.
 // Revision 13 narrows agent-origin reach and roster wire shapes to the nuclear family.
 // Revision 14 carries the client's monotonic telemetry opt-out on attach and reattach.
-export const DAEMON_SCHEMA_REVISION = 14;
-export const DAEMON_SCHEMA_ID = "protocol-7-schema-14-816309b1cd50";
+// Revision 15 adds capability-scoped extension host actions and structured responses.
+export const DAEMON_SCHEMA_REVISION = 15;
+export const DAEMON_SCHEMA_ID = "protocol-7-schema-15-5f2d403ddafb";
 
 export type DaemonProtocolName = typeof DAEMON_PROTOCOL_NAME;
 export type DaemonProtocolVersion = number;
@@ -74,6 +75,7 @@ export type DaemonClientCapability =
 	| "attach_snapshot"
 	| "event_sequence"
 	| "extension_ui"
+	| "extension_host_action"
 	| "slim_attach"
 	| "chunked_snapshot"
 	| "client_owned_sessions";
@@ -119,6 +121,7 @@ export const DAEMON_SUPPORTED_CLIENT_CAPABILITIES: readonly DaemonClientCapabili
 	"attach_snapshot",
 	"event_sequence",
 	"extension_ui",
+	"extension_host_action",
 	"slim_attach",
 	"chunked_snapshot",
 	"client_owned_sessions",
@@ -770,10 +773,28 @@ export type DaemonErrorInfo =
 export type DaemonSessionClosedReason = "killed" | "shutdown" | "completed" | "replaced" | "update";
 export type DaemonClosingReason = "shutdown" | "update";
 
-export type DaemonExtensionUIResponse = { value: string } | { confirmed: boolean } | { cancelled: true };
+export interface DaemonExtensionHostActionFailure {
+	code: string;
+	message: string;
+	retryable?: boolean;
+	details?: Record<string, unknown>;
+}
+
+export type DaemonExtensionUIResponse =
+	| { value: string }
+	| { confirmed: boolean }
+	| { cancelled: true }
+	| { result: Record<string, unknown> }
+	| { error: DaemonExtensionHostActionFailure };
 
 export function isDaemonDialogExtensionUiRequest(method: string): boolean {
-	return method === "select" || method === "confirm" || method === "input" || method === "editor";
+	return (
+		method === "select" ||
+		method === "confirm" ||
+		method === "input" ||
+		method === "editor" ||
+		method === "hostAction"
+	);
 }
 
 /**

@@ -189,6 +189,9 @@ export async function emitSessionShutdownEvent(
 const noOpUIContext: ExtensionUIContext = {
 	select: async () => undefined,
 	confirm: async () => false,
+	requestHostAction: async () => {
+		throw new Error("No extension host action broker is attached");
+	},
 	input: async () => undefined,
 	notify: () => {},
 	onTerminalInput: () => () => {},
