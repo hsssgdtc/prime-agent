@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- Added local per-request context composition, provider cache usage, latency, and child-usage telemetry to session traces.
 - Changed global continual-harness writes to require externally signed approval before cross-session state is loaded.
 - Added a configurable copy action to login dialogs so raw sign-in URLs can be copied without selecting wrapped text ([#643](https://github.com/PrimeIntellect-ai/prime-agent/issues/643)).
 - Added privacy-safe pseudonymous product analytics for onboarding, command use, execution modes, run outcomes, TTFT, latency, usage, tools, retries, and compactions, with disclosure and opt-out controls ([ENG-4682](https://linear.app/primeintellect/issue/ENG-4682/add-privacy-safe-posthog-analytics-to-prime-agent)).

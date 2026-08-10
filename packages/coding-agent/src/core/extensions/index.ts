@@ -6,6 +6,11 @@ export type { SlashCommandInfo, SlashCommandSource } from "../slash-commands.js"
 export type { SourceInfo } from "../source-info.js";
 // Built-in extensions
 export {
+	CONTEXT_TELEMETRY_ENTRY_TYPE,
+	contextTelemetryExtension,
+	createContextTelemetryExtension,
+} from "./builtin/context-telemetry.js";
+export {
 	createHerdrAgentStateExtension,
 	hasFileBasedHerdrIntegration,
 	herdrAgentStateExtension,

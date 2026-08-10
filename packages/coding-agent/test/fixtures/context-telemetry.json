@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "baselineCommit": "169ccc13ba26731809fa17811d0c9bd0066e22eb",
+  "entryType": "prime_context_telemetry",
+  "phases": ["request", "response"],
+  "requestFields": [
+    "systemTokens",
+    "historyTokens",
+    "toolSchemaTokens",
+    "currentTokens",
+    "childUsageTokensCumulative",
+    "childUsageTokensSincePreviousRequest"
+  ],
+  "responseFields": [
+    "uncachedInputTokens",
+    "cacheReadTokens",
+    "cacheWriteTokens",
+    "outputTokens",
+    "firstModelEventMs",
+    "visibleTtftMs",
+    "modelLatencyMs",
+    "cost"
+  ],
+  "expected": [
+    "every provider request appends one local request entry with a correlation id and deterministic context composition estimates",
+    "every completed assistant response appends one response entry correlated to the latest request",
+    "provider-reported uncached input, cache read, cache write, output, and cost remain exact rather than inferred",
+    "first model event, visible text TTFT, and total model latency use the provider-request boundary",
+    "child usage attribution is reported separately as cumulative and since-previous-request totals",
+    "system text, user content, tool descriptions, tool parameters, and model output are not copied into telemetry entries",
+    "the built-in extension is active for root and child sessions unless all extensions are explicitly disabled"
+  ]
+}
