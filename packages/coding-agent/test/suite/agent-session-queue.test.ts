@@ -1,5 +1,6 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { generateKeyPairSync, sign } from "node:crypto";
+import { mkdirSync, readFileSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -15,12 +16,15 @@ import { type AgentCronJob, shouldDeferHeartbeatCronJob } from "../../src/core/c
 import { createSessionSlashCommandMessage } from "../../src/core/messages.js";
 import {
 	applyRefinementProposal,
+	buildGlobalHarnessApprovalPayload,
+	type GlobalHarnessApprovalReceipt,
 	getGlobalHarnessStateDir,
 	getHarnessStatePath,
 	getLocalHarnessStateDir,
 	type HarnessEntry,
 	loadGlobalRefinementHistory,
 	loadHarnessState,
+	publishGlobalHarnessProposal,
 	type RefinementResult,
 	saveHarnessState,
 } from "../../src/core/refinement/index.js";
@@ -75,6 +79,43 @@ function refinePlanJson(summary: string, edits: unknown[] = []): string {
 
 function createAutoRefineHarness(options: Parameters<typeof createHarness>[0] = {}): Promise<Harness> {
 	return createHarness({ ...options, persistSession: true });
+}
+
+const GLOBAL_APPROVAL_KEY_ENV = "PRIME_GLOBAL_HARNESS_APPROVAL_PUBLIC_KEY";
+
+function publishGlobalHarnessSeed(harnessStateDir: string, state: unknown): string | undefined {
+	const previousApprovalKey = process.env[GLOBAL_APPROVAL_KEY_ENV];
+	const { privateKey, publicKey } = generateKeyPairSync("ed25519");
+	process.env[GLOBAL_APPROVAL_KEY_ENV] = publicKey.export({ format: "der", type: "spki" }).toString("base64");
+	const candidatePath = saveHarnessState(harnessStateDir, state as Parameters<typeof saveHarnessState>[1]);
+	const proposalId = basename(dirname(candidatePath));
+	const pending = JSON.parse(readFileSync(join(dirname(candidatePath), "receipt.json"), "utf8")) as {
+		candidateSha256: string;
+		basePublishedSha256: string | null;
+		publicationSequence: number;
+	};
+	const unsigned = {
+		schema: 2 as const,
+		proposalId,
+		candidateSha256: pending.candidateSha256,
+		basePublishedSha256: pending.basePublishedSha256,
+		publicationSequence: pending.publicationSequence,
+		decision: "approved" as const,
+		approvedBy: "test",
+		approvedAt: "2026-08-10T00:00:00.000Z",
+		signatureAlgorithm: "ed25519" as const,
+	};
+	const receipt: GlobalHarnessApprovalReceipt = {
+		...unsigned,
+		signature: sign(null, buildGlobalHarnessApprovalPayload(unsigned), privateKey).toString("base64"),
+	};
+	publishGlobalHarnessProposal(harnessStateDir, receipt);
+	return previousApprovalKey;
+}
+
+function restoreGlobalApprovalKey(previous: string | undefined): void {
+	if (previous === undefined) delete process.env[GLOBAL_APPROVAL_KEY_ENV];
+	else process.env[GLOBAL_APPROVAL_KEY_ENV] = previous;
 }
 
 function agentPromptText(id: string, body: string): string {
@@ -848,6 +889,7 @@ describe("AgentSession queue characterization", () => {
 			updatedContent: "Updated local content",
 			expectLocalContent: "Updated local content" as string | undefined,
 			expectGlobalContent: "Global content" as string | undefined,
+			expectCandidateGlobalContent: undefined as string | undefined,
 		},
 		{
 			name: "global display prefixes before applying local refine edits",
@@ -858,6 +900,7 @@ describe("AgentSession queue characterization", () => {
 			updatedContent: "Updated local content",
 			expectLocalContent: "Updated local content" as string | undefined,
 			expectGlobalContent: undefined as string | undefined,
+			expectCandidateGlobalContent: undefined as string | undefined,
 		},
 		{
 			name: "global display prefixes before applying global refine edits",
@@ -867,7 +910,8 @@ describe("AgentSession queue characterization", () => {
 			refineOptions: { instructions: "update the global shared memory", global: true },
 			updatedContent: "Updated global content",
 			expectLocalContent: undefined as string | undefined,
-			expectGlobalContent: "Updated global content" as string | undefined,
+			expectGlobalContent: "Global content" as string | undefined,
+			expectCandidateGlobalContent: "Updated global content" as string | undefined,
 		},
 	])(
 		"strips $name",
@@ -879,10 +923,12 @@ describe("AgentSession queue characterization", () => {
 			updatedContent,
 			expectLocalContent,
 			expectGlobalContent,
+			expectCandidateGlobalContent,
 		}) => {
 			const harness = await createAutoRefineHarness();
 			harnesses.push(harness);
 			const previousAgentDir = process.env.PRIME_AGENT_CODING_AGENT_DIR;
+			let previousApprovalKey: string | undefined;
 			process.env.PRIME_AGENT_CODING_AGENT_DIR = `${harness.tempDir}/agent`;
 			try {
 				const globalDir = getGlobalHarnessStateDir();
@@ -901,7 +947,22 @@ describe("AgentSession queue characterization", () => {
 					);
 					saveHarnessState(dir, state);
 				};
-				if (seedGlobal) seedMemory("global", globalDir, "Global content");
+				if (seedGlobal) {
+					const state = loadHarnessState(globalDir, "global");
+					applyRefinementProposal(
+						state,
+						{
+							summary: "global shared memory",
+							rationale: "seed",
+							expectedOutcome: "seeded",
+							edits: [
+								{ action: "create", kind: "memory", id: "shared", title: "Shared", content: "Global content" },
+							],
+						},
+						{ id: "seed_global", scope: "global" },
+					);
+					previousApprovalKey = publishGlobalHarnessSeed(globalDir, state);
+				}
 				if (seedLocal) seedMemory("local", localDir, "Local content");
 				harness.setResponses([
 					fauxAssistantMessage(
@@ -926,7 +987,13 @@ describe("AgentSession queue characterization", () => {
 				if (expectGlobalContent !== undefined) {
 					expect(loadHarnessState(globalDir, "global").entries.memory.shared.content).toBe(expectGlobalContent);
 				}
+				if (expectCandidateGlobalContent !== undefined) {
+					expect(result.publicationStatus).toBe("pending_approval");
+					const candidate = JSON.parse(readFileSync(result.harnessStatePath, "utf8"));
+					expect(candidate.entries.memory.shared.content).toBe(expectCandidateGlobalContent);
+				}
 			} finally {
+				restoreGlobalApprovalKey(previousApprovalKey);
 				if (previousAgentDir === undefined) {
 					delete process.env.PRIME_AGENT_CODING_AGENT_DIR;
 				} else {
@@ -1192,10 +1259,11 @@ describe("AgentSession queue characterization", () => {
 		}
 	});
 
-	it("keeps a legacy scope-less rollback in the global store with global scope", async () => {
+	it("stages a legacy scope-less global rollback for approval without mutating published state", async () => {
 		const harness = await createAutoRefineHarness();
 		harnesses.push(harness);
 		const previousAgentDir = process.env.PRIME_AGENT_CODING_AGENT_DIR;
+		let previousApprovalKey: string | undefined;
 		process.env.PRIME_AGENT_CODING_AGENT_DIR = `${harness.tempDir}/agent`;
 		try {
 			const globalDir = getGlobalHarnessStateDir();
@@ -1216,22 +1284,19 @@ describe("AgentSession queue characterization", () => {
 				version: 1,
 			});
 			mkdirSync(globalDir, { recursive: true });
-			writeFileSync(
-				getHarnessStatePath(globalDir),
-				JSON.stringify({
-					schema: 1,
-					entries: {
-						prompt: {},
-						memory: {
-							legacy_target: legacyEntry("legacy_target", "Rolled back"),
-							keep_me: legacyEntry("keep_me", "Untouched"),
-						},
-						skill: {},
-						subagent: {},
+			previousApprovalKey = publishGlobalHarnessSeed(globalDir, {
+				schema: 1,
+				entries: {
+					prompt: {},
+					memory: {
+						legacy_target: legacyEntry("legacy_target", "Rolled back"),
+						keep_me: legacyEntry("keep_me", "Untouched"),
 					},
-					refinements: [],
-				}),
-			);
+					skill: {},
+					subagent: {},
+				},
+				refinements: [],
+			});
 			const legacyRefinement: RefinementResult = {
 				id: "refine_legacy",
 				summary: "legacy refinement",
@@ -1253,15 +1318,16 @@ describe("AgentSession queue characterization", () => {
 			const result = await harness.session.refine({ rollbackId: "refine_legacy" });
 
 			expect(result.scope).toBe("global");
-			const stored = JSON.parse(readFileSync(getHarnessStatePath(globalDir), "utf8"));
-			expect(stored.entries.memory.legacy_target).toBeUndefined();
-			expect(stored.entries.memory.keep_me.scope).toBe("global");
-			const rollbackRecord = loadGlobalRefinementHistory(globalDir).find(
-				(item) => item.rollbackOf === "refine_legacy",
-			);
-			expect(rollbackRecord).toBeDefined();
-			expect(rollbackRecord?.scope).toBe("global");
+			expect(result.publicationStatus).toBe("pending_approval");
+			expect(loadHarnessState(globalDir, "global").entries.memory.legacy_target).toBeDefined();
+			const candidate = JSON.parse(readFileSync(result.harnessStatePath, "utf8"));
+			expect(candidate.entries.memory.legacy_target).toBeUndefined();
+			expect(candidate.entries.memory.keep_me.scope).toBe("global");
+			expect(
+				loadGlobalRefinementHistory(globalDir).find((item) => item.rollbackOf === "refine_legacy"),
+			).toBeUndefined();
 		} finally {
+			restoreGlobalApprovalKey(previousApprovalKey);
 			if (previousAgentDir === undefined) {
 				delete process.env.PRIME_AGENT_CODING_AGENT_DIR;
 			} else {
