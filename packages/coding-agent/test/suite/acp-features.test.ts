@@ -422,9 +422,9 @@ describe("ACP mode preserves prime-agent features", () => {
 			harness.setResponses([fauxAssistantMessage("noted")]);
 			const fixture = await connectAcp(harness);
 
-			// Stub ONLY the planner, which is the refiner's LLM call. The apply phase
-			// then runs for real: it applies the proposal, persists harness state, and
-			// emits the genuine refine_complete event this test is about.
+			// Stub ONLY the planner, which is the refiner's LLM call. The proposal
+			// phase then runs for real: global refinement must stop at the approval
+			// boundary and emit the genuine refine_complete event this test is about.
 			const internals = harness.session as unknown as {
 				_planRefine: (...args: unknown[]) => Promise<unknown>;
 			};
@@ -455,7 +455,7 @@ describe("ACP mode preserves prime-agent features", () => {
 
 			const refinements = fixture.metaOf("refinement");
 			expect(refinements.length, "refinement outcome must reach the ACP client").toBeGreaterThan(0);
-			expect(refinements.at(-1)).toMatchObject({ status: "complete", summary: "refined for ACP" });
+			expect(refinements.at(-1)).toMatchObject({ status: "pending_approval", summary: "refined for ACP" });
 		} finally {
 			if (previousAgentDir === undefined) delete process.env[ENV_AGENT_DIR];
 			else process.env[ENV_AGENT_DIR] = previousAgentDir;
