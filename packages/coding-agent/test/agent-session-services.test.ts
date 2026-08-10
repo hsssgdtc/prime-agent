@@ -49,6 +49,31 @@ describe("createAgentSessionFromServices", () => {
 		expect(settingsManager.getTelemetryNoticeShown()).toBe(true);
 	});
 
+	it("keeps local context telemetry for child services unless extensions are disabled", async () => {
+		const tempDir = join(tmpdir(), `pi-session-context-telemetry-${Date.now()}`);
+		mkdirSync(tempDir, { recursive: true });
+		cleanupPaths.push(tempDir);
+
+		const childServices = await createAgentSessionServices({
+			cwd: tempDir,
+			agentDir: tempDir,
+			noBuiltinHerdrReporter: true,
+			resourceLoaderOptions: { noPromptTemplates: true, noThemes: true },
+		});
+		expect(
+			childServices.resourceLoader
+				.getExtensions()
+				.extensions.some((extension) => (extension.handlers.get("context")?.length ?? 0) > 0),
+		).toBe(true);
+
+		const disabledServices = await createAgentSessionServices({
+			cwd: tempDir,
+			agentDir: tempDir,
+			resourceLoaderOptions: { noExtensions: true, noPromptTemplates: true, noThemes: true },
+		});
+		expect(disabledServices.resourceLoader.getExtensions().extensions).toHaveLength(0);
+	});
+
 	it("honors an explicit daemon-carried telemetry opt-out", async () => {
 		vi.stubEnv("PRIME_AGENT_TELEMETRY", "1");
 		const tempDir = join(tmpdir(), `pi-session-daemon-telemetry-opt-out-${Date.now()}`);
