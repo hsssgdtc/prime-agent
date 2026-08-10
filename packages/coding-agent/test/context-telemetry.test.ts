@@ -117,7 +117,7 @@ describe("context telemetry", () => {
 			type: CONTEXT_TELEMETRY_ENTRY_TYPE,
 			data: {
 				phase: "request",
-				correlationId: "session-1:4:1",
+				correlationId: "session-1:1",
 				turnIndex: 4,
 				requestIndex: 1,
 				historyTokens: 4,
@@ -131,7 +131,7 @@ describe("context telemetry", () => {
 			type: CONTEXT_TELEMETRY_ENTRY_TYPE,
 			data: {
 				phase: "response",
-				correlationId: "session-1:4:1",
+				correlationId: "session-1:1",
 				uncachedInputTokens: 20,
 				cacheReadTokens: 11,
 				cacheWriteTokens: 3,
@@ -163,6 +163,49 @@ describe("context telemetry", () => {
 		expect(requests[1]).toMatchObject({
 			childUsageTokensCumulative: 10,
 			childUsageTokensSincePreviousRequest: 0,
+		});
+	});
+
+	it("keeps request correlation ids unique when a new prompt resets turnIndex", () => {
+		const { entries, emit } = createHarness([]);
+		emit("turn_start", { type: "turn_start", turnIndex: 0, timestamp: 0 });
+		emit("context", { type: "context", messages: [] });
+		emit("turn_start", { type: "turn_start", turnIndex: 0, timestamp: 1 });
+		emit("context", { type: "context", messages: [] });
+		expect(entries.map((entry) => entry.data.correlationId)).toEqual(["session-1:1", "session-1:2"]);
+	});
+
+	it("uses the latest provider retry as the latency origin", () => {
+		const { entries, emit } = createHarness([1_000, 1_020, 1_100, 1_130, 1_160]);
+		emit("turn_start", { type: "turn_start", turnIndex: 0, timestamp: 0 });
+		emit("context", { type: "context", messages: [] });
+		emit("before_provider_request", { type: "before_provider_request", payload: {} });
+		emit("message_update", {
+			type: "message_update",
+			message: {},
+			assistantMessageEvent: { type: "text_delta", delta: "discarded attempt" },
+		});
+		emit("before_provider_request", { type: "before_provider_request", payload: {} });
+		emit("message_update", {
+			type: "message_update",
+			message: {},
+			assistantMessageEvent: { type: "text_delta", delta: "final attempt" },
+		});
+		emit("message_end", {
+			type: "message_end",
+			message: {
+				role: "assistant",
+				content: [],
+				provider: "openai",
+				model: "gpt-test",
+				usage: usage(1, 1, 0, 0),
+				stopReason: "stop",
+			},
+		});
+		expect(entries.at(-1)?.data).toMatchObject({
+			firstModelEventMs: 30,
+			visibleTtftMs: 30,
+			modelLatencyMs: 60,
 		});
 	});
 });

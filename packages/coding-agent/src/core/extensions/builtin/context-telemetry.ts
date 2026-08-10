@@ -69,14 +69,13 @@ export function createContextTelemetryExtension(options: ContextTelemetryOptions
 export function contextTelemetryExtension(pi: ExtensionAPI, options: ContextTelemetryOptions = {}): void {
 	const now = options.now ?? Date.now;
 	let turnIndex = 0;
-	let requestIndex = 0;
+	let sessionRequestIndex = 0;
 	let latestSystemPrompt = "";
 	let activeRequest: ActiveRequest | undefined;
 	const seenChildUsageEntryIds = new Set<string>();
 
 	pi.on("turn_start", (event) => {
 		turnIndex = event.turnIndex;
-		requestIndex = 0;
 	});
 
 	pi.on("before_agent_start", (event) => {
@@ -84,8 +83,8 @@ export function contextTelemetryExtension(pi: ExtensionAPI, options: ContextTele
 	});
 
 	pi.on("context", (event, ctx) => {
-		requestIndex += 1;
-		const correlationId = `${ctx.sessionManager.getSessionId()}:${turnIndex}:${requestIndex}`;
+		sessionRequestIndex += 1;
+		const correlationId = `${ctx.sessionManager.getSessionId()}:${sessionRequestIndex}`;
 		const currentStart = currentTurnStart(event.messages);
 		const history = event.messages.slice(0, currentStart);
 		const current = event.messages.slice(currentStart);
@@ -116,7 +115,7 @@ export function contextTelemetryExtension(pi: ExtensionAPI, options: ContextTele
 			phase: "request",
 			correlationId,
 			turnIndex,
-			requestIndex,
+			requestIndex: sessionRequestIndex,
 			systemTokens: textTokens(systemPrompt),
 			historyTokens: history.reduce((total, message) => total + estimateTokens(message), 0),
 			toolSchemaTokens: textTokens(toolSchemaJson),
@@ -132,7 +131,10 @@ export function contextTelemetryExtension(pi: ExtensionAPI, options: ContextTele
 	});
 
 	pi.on("before_provider_request", (_event) => {
-		if (activeRequest) activeRequest.providerStartedAt = now();
+		if (!activeRequest) return;
+		activeRequest.providerStartedAt = now();
+		activeRequest.firstModelEventMs = undefined;
+		activeRequest.visibleTtftMs = undefined;
 	});
 
 	pi.on("message_update", (event) => {
