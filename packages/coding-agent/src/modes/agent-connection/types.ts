@@ -327,6 +327,7 @@ export interface AgentConnectionState {
 	isCompacting: boolean;
 	isBashRunning: boolean;
 	retryAttempt: number;
+	autoRetryEnabled: boolean;
 	steeringMode: AgentConnectionQueueMode;
 	followUpMode: AgentConnectionQueueMode;
 	sessionFile?: string;

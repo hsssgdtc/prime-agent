@@ -36,6 +36,7 @@ export function createAgentConnectionState(
 		isCompacting: session.isCompacting,
 		isBashRunning: session.isBashRunning,
 		retryAttempt: session.retryAttempt,
+		autoRetryEnabled: session.autoRetryEnabled,
 		steeringMode: session.steeringMode,
 		followUpMode: session.followUpMode,
 		sessionFile: session.sessionFile,

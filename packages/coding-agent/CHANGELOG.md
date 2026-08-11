@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- Added active-session auto-retry status to daemon connection-state snapshots.
 - Added a capability-scoped daemon goal command so bounded successor sessions can restore an active goal without asking policy code to recreate it.
 - Added a capability-scoped daemon host-action bridge so in-worker extensions can request structured, fail-closed actions from an attached gateway.
 - Added local per-request context composition, provider cache usage, latency, and child-usage telemetry to session traces.

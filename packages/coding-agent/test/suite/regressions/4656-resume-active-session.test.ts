@@ -133,6 +133,7 @@ function createConnectionState(activeSessionId: string): AgentConnectionState {
 		isCompacting: false,
 		isBashRunning: false,
 		retryAttempt: 0,
+		autoRetryEnabled: true,
 		steeringMode: "all",
 		followUpMode: "one-at-a-time",
 		sessionFile: `/tmp/${activeSessionId}.jsonl`,

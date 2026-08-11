@@ -112,6 +112,7 @@ function createConnectionState(overrides: Partial<AgentConnectionState> = {}): A
 		activeToolNames: ["ipython"],
 		contextUsage: undefined,
 		...overrides,
+		autoRetryEnabled: overrides.autoRetryEnabled ?? true,
 	};
 }
 
