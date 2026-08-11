@@ -568,6 +568,7 @@ function createConnectionState(activeSessionId: string, sessionId: string): Agen
 		isCompacting: false,
 		isBashRunning: false,
 		retryAttempt: 0,
+		autoRetryEnabled: true,
 		steeringMode: "all",
 		followUpMode: "one-at-a-time",
 		sessionFile: `/tmp/${sessionId}.jsonl`,

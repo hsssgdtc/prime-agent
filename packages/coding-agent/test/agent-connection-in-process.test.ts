@@ -92,6 +92,7 @@ function createFakeSession(id: string, messages: AgentMessage[]): FakeSessionCon
 		isStreaming: false,
 		isCompacting: false,
 		retryAttempt: 0,
+		autoRetryEnabled: true,
 		steeringMode: "all",
 		followUpMode: "one-at-a-time",
 		sessionFile: `/tmp/${id}.jsonl`,
@@ -263,6 +264,7 @@ describe("InProcessAgentConnection", () => {
 			state: {
 				cwd: "/tmp/snapshot",
 				sessionId: "snapshot",
+				autoRetryEnabled: true,
 				messageCount: 1,
 				leafId: "snapshot-leaf",
 			},

@@ -59,8 +59,9 @@ export const DAEMON_COMMAND_ENVELOPE_MIN_PROTOCOL_VERSION = 7;
 // Revision 14 carries the client's monotonic telemetry opt-out on attach and reattach.
 // Revision 15 adds capability-scoped extension host actions and structured responses.
 // Revision 16 adds capability-scoped goal creation for bounded-session handoff.
-export const DAEMON_SCHEMA_REVISION = 16;
-export const DAEMON_SCHEMA_ID = "protocol-7-schema-16-468ed7590159";
+// Revision 17 publishes the active session's auto-retry setting in connection state.
+export const DAEMON_SCHEMA_REVISION = 17;
+export const DAEMON_SCHEMA_ID = "protocol-7-schema-17-468ed7590159";
 
 export type DaemonProtocolName = typeof DAEMON_PROTOCOL_NAME;
 export type DaemonProtocolVersion = number;
@@ -90,6 +91,7 @@ export type DaemonServerCapability =
 	| "heartbeat_catalog"
 	| "heartbeat_management"
 	| "goal_management"
+	| "auto_retry_state"
 	| "model_catalog"
 	// The daemon honors previousTurns on start_side_question (multi-turn side
 	// conversations). Clients must check before sending follow-up transcripts.
@@ -135,6 +137,7 @@ export const DAEMON_DEFAULT_SERVER_CAPABILITIES: readonly DaemonServerCapability
 	"heartbeat_catalog",
 	"heartbeat_management",
 	"goal_management",
+	"auto_retry_state",
 	"model_catalog",
 	"side_question_transcript",
 	"transient_bash",

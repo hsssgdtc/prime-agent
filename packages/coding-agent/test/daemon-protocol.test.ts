@@ -98,6 +98,11 @@ describe("daemon protocol helpers", () => {
 		expect(isDaemonMutatingCommand({ type: "goal_create" })).toBe(true);
 	});
 
+	it("advertises active-session auto-retry state at schema revision 17", () => {
+		expect(DAEMON_SCHEMA_REVISION).toBe(17);
+		expect(DAEMON_DEFAULT_SERVER_CAPABILITIES).toContain("auto_retry_state");
+	});
+
 	it("schema-gates the RLM max depth commands at their introducing revision", () => {
 		expect(DAEMON_COMMAND_COMPATIBILITY.get_rlm_max_depth_status).toEqual({ minProtocol: 7, minSchemaRevision: 11 });
 		expect(DAEMON_COMMAND_COMPATIBILITY.set_rlm_max_depth).toEqual({ minProtocol: 7, minSchemaRevision: 11 });
