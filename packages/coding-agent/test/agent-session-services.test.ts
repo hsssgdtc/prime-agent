@@ -72,6 +72,16 @@ describe("createAgentSessionFromServices", () => {
 			resourceLoaderOptions: { noExtensions: true, noPromptTemplates: true, noThemes: true },
 		});
 		expect(disabledServices.resourceLoader.getExtensions().extensions).toHaveLength(0);
+
+		const contextOnlyServices = await createAgentSessionServices({
+			cwd: tempDir,
+			agentDir: tempDir,
+			enableBuiltinContextTelemetry: true,
+			resourceLoaderOptions: { noExtensions: true, noPromptTemplates: true, noThemes: true },
+		});
+		const retainedExtensions = contextOnlyServices.resourceLoader.getExtensions().extensions;
+		expect(retainedExtensions).toHaveLength(1);
+		expect(retainedExtensions[0]?.handlers.get("context")?.length).toBe(1);
 	});
 
 	it("honors an explicit daemon-carried telemetry opt-out", async () => {

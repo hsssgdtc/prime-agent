@@ -60,8 +60,9 @@ export const DAEMON_COMMAND_ENVELOPE_MIN_PROTOCOL_VERSION = 7;
 // Revision 15 adds capability-scoped extension host actions and structured responses.
 // Revision 16 adds capability-scoped goal creation for bounded-session handoff.
 // Revision 17 publishes the active session's auto-retry setting in connection state.
-export const DAEMON_SCHEMA_REVISION = 17;
-export const DAEMON_SCHEMA_ID = "protocol-7-schema-17-468ed7590159";
+// Revision 18 capability-gates retaining built-in context telemetry under extension isolation.
+export const DAEMON_SCHEMA_REVISION = 18;
+export const DAEMON_SCHEMA_ID = "protocol-7-schema-18-468ed7590159";
 
 export type DaemonProtocolName = typeof DAEMON_PROTOCOL_NAME;
 export type DaemonProtocolVersion = number;
@@ -92,6 +93,7 @@ export type DaemonServerCapability =
 	| "heartbeat_management"
 	| "goal_management"
 	| "auto_retry_state"
+	| "builtin_context_telemetry"
 	| "model_catalog"
 	// The daemon honors previousTurns on start_side_question (multi-turn side
 	// conversations). Clients must check before sending follow-up transcripts.
@@ -138,6 +140,7 @@ export const DAEMON_DEFAULT_SERVER_CAPABILITIES: readonly DaemonServerCapability
 	"heartbeat_management",
 	"goal_management",
 	"auto_retry_state",
+	"builtin_context_telemetry",
 	"model_catalog",
 	"side_question_transcript",
 	"transient_bash",
@@ -645,6 +648,11 @@ const DELETE_RLM_SUBAGENT_COMMAND = {
 } as const;
 const FLAT_SESSION_TREE_COMMAND = { minProtocol: 7 } as const;
 const TELEMETRY_POLICY_COMMAND = { minProtocol: 7, minSchemaRevision: 14 } as const;
+const BUILTIN_CONTEXT_TELEMETRY_COMMAND = {
+	minProtocol: 7,
+	minSchemaRevision: 18,
+	capability: "builtin_context_telemetry",
+} as const;
 const GOAL_MANAGEMENT_COMMAND = { minProtocol: 7, minSchemaRevision: 16, capability: "goal_management" } as const;
 
 export const DAEMON_COMMAND_COMPATIBILITY = {
@@ -750,16 +758,20 @@ export const DAEMON_COMMAND_COMPATIBILITY = {
 
 export function getDaemonCommandCompatibilities(command: DaemonCommand): readonly DaemonCommandCompatibility[] {
 	const compatibility = DAEMON_COMMAND_COMPATIBILITY[command.type];
+	const additional: DaemonCommandCompatibility[] = [];
 	const carriesTelemetryPolicy =
 		((command.type === "attach" || command.type === "reattach") && command.telemetryDisabled !== undefined) ||
 		(command.type === "create" && command.config?.telemetryDisabled !== undefined);
 	if (carriesTelemetryPolicy) {
-		return [TELEMETRY_POLICY_COMMAND, compatibility];
+		additional.push(TELEMETRY_POLICY_COMMAND);
+	}
+	if (command.type === "create" && command.config?.builtinContextTelemetry !== undefined) {
+		additional.push(BUILTIN_CONTEXT_TELEMETRY_COMMAND);
 	}
 	if ((command.type === "prompt" || command.type === "prompt_and_wait") && command.admissionId !== undefined) {
-		return [PROMPT_ADMISSION_CANCELLATION_COMMAND, compatibility];
+		additional.push(PROMPT_ADMISSION_CANCELLATION_COMMAND);
 	}
-	return [compatibility];
+	return [...additional, compatibility];
 }
 
 export type DaemonResponse =
