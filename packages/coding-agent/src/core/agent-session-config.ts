@@ -19,6 +19,12 @@ export interface AgentSessionRuntimeConfig {
 	noBuiltinTools?: boolean;
 	extensions?: string[];
 	noExtensions?: boolean;
+	/**
+	 * Keep Prime's session-local context telemetry active when file and user
+	 * extensions are disabled. This opt-in does not re-enable extension
+	 * discovery or any other built-in extension.
+	 */
+	builtinContextTelemetry?: true;
 	skills?: string[];
 	noSkills?: boolean;
 	promptTemplates?: string[];
@@ -70,6 +76,7 @@ export function mergeAgentSessionRuntimeConfig(
 		noBuiltinTools: override.noBuiltinTools ?? base.noBuiltinTools,
 		extensions: cloneArray(override.extensions ?? base.extensions),
 		noExtensions: override.noExtensions ?? base.noExtensions,
+		builtinContextTelemetry: base.builtinContextTelemetry || override.builtinContextTelemetry ? true : undefined,
 		skills: cloneArray(override.skills ?? base.skills),
 		noSkills: override.noSkills ?? base.noSkills,
 		promptTemplates: cloneArray(override.promptTemplates ?? base.promptTemplates),
@@ -96,6 +103,7 @@ function cloneAgentSessionRuntimeConfig(config: AgentSessionRuntimeConfig): Agen
 		models: cloneArray(config.models),
 		tools: cloneArray(config.tools),
 		extensions: cloneArray(config.extensions),
+		builtinContextTelemetry: config.builtinContextTelemetry,
 		skills: cloneArray(config.skills),
 		promptTemplates: cloneArray(config.promptTemplates),
 		themes: cloneArray(config.themes),

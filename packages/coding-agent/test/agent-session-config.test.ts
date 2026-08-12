@@ -168,4 +168,10 @@ describe("mergeAgentSessionRuntimeConfig", () => {
 		expect(mergeAgentSessionRuntimeConfig({}, { telemetryDisabled: true }).telemetryDisabled).toBe(true);
 		expect(mergeAgentSessionRuntimeConfig({}, {}).telemetryDisabled).toBeUndefined();
 	});
+
+	it("keeps the built-in context telemetry opt-in across daemon config merges", () => {
+		expect(mergeAgentSessionRuntimeConfig({ builtinContextTelemetry: true }, {}).builtinContextTelemetry).toBe(true);
+		expect(mergeAgentSessionRuntimeConfig({}, { builtinContextTelemetry: true }).builtinContextTelemetry).toBe(true);
+		expect(mergeAgentSessionRuntimeConfig({}, {}).builtinContextTelemetry).toBeUndefined();
+	});
 });

@@ -55,6 +55,8 @@ export interface CreateAgentSessionServicesOptions {
 	 * would release the pane while the parent is still running.
 	 */
 	noBuiltinHerdrReporter?: boolean;
+	/** Explicitly retain only the built-in context telemetry under noExtensions. */
+	enableBuiltinContextTelemetry?: boolean;
 	/** Explicit daemon-carried opt-out; cannot enable telemetry. */
 	telemetryDisabled?: true;
 }
@@ -199,18 +201,16 @@ export async function createAgentSessionServices(
 	// pane. Deferral is late-bound to the loader's loaded paths (inline
 	// factories run after file extensions load), so a file that exists but is
 	// disabled or never discovered does not silence the built-in.
-	// noExtensions is a full opt-out: it disables the built-in reporter too,
-	// not just discovered extension files.
+	// noExtensions remains a full opt-out unless the host explicitly retains
+	// the session-local context telemetry. That narrow opt-in must not revive
+	// file discovery or unrelated built-in reporters.
 	const noExtensions = options.resourceLoaderOptions?.noExtensions;
 	const skipHerdrReporter = options.noBuiltinHerdrReporter || noExtensions;
-	const builtinExtensionFactories = noExtensions
-		? []
-		: [
-				createContextTelemetryExtension(),
-				...(skipHerdrReporter
-					? []
-					: [createHerdrAgentStateExtension(() => resourceLoader.getLoadedExtensionPaths())]),
-			];
+	const keepContextTelemetry = !noExtensions || options.enableBuiltinContextTelemetry === true;
+	const builtinExtensionFactories = [
+		...(keepContextTelemetry ? [createContextTelemetryExtension()] : []),
+		...(skipHerdrReporter ? [] : [createHerdrAgentStateExtension(() => resourceLoader.getLoadedExtensionPaths())]),
+	];
 	const resourceLoader: DefaultResourceLoader = new DefaultResourceLoader({
 		...(options.resourceLoaderOptions ?? {}),
 		extensionFactories: [...builtinExtensionFactories, ...userExtensionFactories],
