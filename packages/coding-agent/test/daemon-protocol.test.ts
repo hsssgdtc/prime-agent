@@ -98,9 +98,10 @@ describe("daemon protocol helpers", () => {
 		expect(isDaemonMutatingCommand({ type: "goal_create" })).toBe(true);
 	});
 
-	it("advertises active-session auto-retry state at schema revision 17", () => {
-		expect(DAEMON_SCHEMA_REVISION).toBe(17);
+	it("advertises active-session auto-retry state and isolated context telemetry", () => {
+		expect(DAEMON_SCHEMA_REVISION).toBe(18);
 		expect(DAEMON_DEFAULT_SERVER_CAPABILITIES).toContain("auto_retry_state");
+		expect(DAEMON_DEFAULT_SERVER_CAPABILITIES).toContain("builtin_context_telemetry");
 	});
 
 	it("schema-gates the RLM max depth commands at their introducing revision", () => {
@@ -129,6 +130,28 @@ describe("daemon protocol helpers", () => {
 				telemetryDisabled: true,
 			}),
 		).toEqual([{ minProtocol: 7, minSchemaRevision: 14 }, { minProtocol: 7 }]);
+	});
+
+	it("schema- and capability-gates the built-in context telemetry create option", () => {
+		expect(
+			getDaemonCommandCompatibilities({
+				type: "create",
+				config: { cwd: "/tmp", builtinContextTelemetry: true },
+			}),
+		).toEqual([
+			{ minProtocol: 7, minSchemaRevision: 18, capability: "builtin_context_telemetry" },
+			{ minProtocol: 7 },
+		]);
+		expect(
+			getDaemonCommandCompatibilities({
+				type: "create",
+				config: { cwd: "/tmp", telemetryDisabled: true, builtinContextTelemetry: true },
+			}),
+		).toEqual([
+			{ minProtocol: 7, minSchemaRevision: 14 },
+			{ minProtocol: 7, minSchemaRevision: 18, capability: "builtin_context_telemetry" },
+			{ minProtocol: 7 },
+		]);
 	});
 
 	it("version- and capability-gates prompt admission cancellation", () => {

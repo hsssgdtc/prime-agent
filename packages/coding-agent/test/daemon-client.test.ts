@@ -230,6 +230,52 @@ describe("DaemonClient", () => {
 		client.close();
 	});
 
+	it("does not send the context telemetry create option to an old daemon", async () => {
+		const client = new DaemonClient("/tmp/prime-agent.sock");
+		const connect = client.connect();
+		const socket = netMock.sockets[0]!;
+		socket.emit("connect");
+		await connect;
+		emitHello(socket, DAEMON_PROTOCOL_VERSION, [], DAEMON_SCHEMA_REVISION - 1);
+
+		await expect(
+			client.request({
+				type: "create",
+				config: { cwd: "/tmp", builtinContextTelemetry: true },
+			}),
+		).rejects.toThrow("does not support builtin_context_telemetry");
+		expect(socket.writes).toEqual([]);
+		client.close();
+	});
+
+	it("keeps old create shapes working and sends the opt-in to a capable daemon", async () => {
+		const oldShapeClient = new DaemonClient("/tmp/prime-agent-old-shape.sock");
+		const oldShapeConnect = oldShapeClient.connect();
+		const oldShapeSocket = netMock.sockets[0]!;
+		oldShapeSocket.emit("connect");
+		await oldShapeConnect;
+		emitHello(oldShapeSocket, DAEMON_PROTOCOL_VERSION, ["builtin_context_telemetry"], DAEMON_SCHEMA_REVISION);
+		const oldShapeRequest = oldShapeClient.request({ type: "create", config: { cwd: "/tmp" } });
+		await vi.waitFor(() => expect(oldShapeSocket.writes).toHaveLength(1));
+		oldShapeClient.close();
+		await expect(oldShapeRequest).rejects.toThrow("closed before the operation completed");
+
+		const capableClient = new DaemonClient("/tmp/prime-agent-capable.sock");
+		const capableConnect = capableClient.connect();
+		const capableSocket = netMock.sockets[1]!;
+		capableSocket.emit("connect");
+		await capableConnect;
+		emitHello(capableSocket, DAEMON_PROTOCOL_VERSION, ["builtin_context_telemetry"], DAEMON_SCHEMA_REVISION);
+		const capableRequest = capableClient.request({
+			type: "create",
+			config: { cwd: "/tmp", builtinContextTelemetry: true },
+		});
+		await vi.waitFor(() => expect(capableSocket.writes).toHaveLength(1));
+		expect(capableSocket.writes[0]).toContain('"builtinContextTelemetry":true');
+		capableClient.close();
+		await expect(capableRequest).rejects.toThrow("closed before the operation completed");
+	});
+
 	it("sends subagent deletion to a capable daemon without requiring a schema bump", async () => {
 		const client = new DaemonClient("/tmp/prime-agent.sock");
 		const connect = client.connect();
